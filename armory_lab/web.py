@@ -8,11 +8,9 @@ from dataclasses import dataclass
 import matplotlib
 import numpy as np
 from flask import Flask, Response, render_template_string, request
-from numpy.typing import NDArray
 
-from armory_lab.algos.base import BAIResult, HistoryRecord
-from armory_lab.envs.bernoulli import BernoulliBandit
-from armory_lab.run import build_algo, generate_means
+from armory_lab.algos.base import HistoryRecord
+from armory_lab.run import RunConfig, run_once
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
@@ -30,21 +28,27 @@ class RoundPreview:
 @dataclass(slots=True)
 class WebRunResult:
     config: dict[str, str]
-    result: BAIResult
-    means: NDArray[np.float64]
+    recommend_arm: int
     true_best: int
+    total_pulls: int
+    pulls_per_arm: list[int]
     ci_plot_b64: str
     alloc_plot_b64: str
     rounds_preview: list[RoundPreview]
     stop_reason: str
     top_true_arms: list[tuple[int, float]]
+    metric_label: str
 
 
 DEFAULT_FORM: dict[str, str] = {
+    "env": "bernoulli",
     "algo": "lucb",
+    "objective": "dps",
+    "threshold": "",
     "k": "20",
     "delta": "0.05",
     "means": "topgap:0.05",
+    "pack": "random",
     "seed": "0",
     "max_pulls": "200000",
 }
@@ -99,11 +103,7 @@ HTML_TEMPLATE = """
       font-size: clamp(1.75rem, 3.2vw, 2.4rem);
       letter-spacing: .01em;
     }
-    .lead {
-      margin: 0;
-      color: var(--muted);
-      line-height: 1.5;
-    }
+    .lead { margin: 0; color: var(--muted); line-height: 1.5; }
     .card {
       background: var(--card);
       border: 1px solid var(--line);
@@ -111,9 +111,7 @@ HTML_TEMPLATE = """
       box-shadow: 0 10px 26px #0000000e;
       padding: 16px;
     }
-    .intro {
-      margin-bottom: 16px;
-    }
+    .intro { margin-bottom: 16px; }
     .steps {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -128,21 +126,14 @@ HTML_TEMPLATE = """
       font-size: .87rem;
       line-height: 1.45;
     }
-    .step b {
-      display: block;
-      margin-bottom: 4px;
-      color: #2f2a24;
-    }
+    .step b { display: block; margin-bottom: 4px; color: #2f2a24; }
     .layout {
       display: grid;
-      grid-template-columns: 370px 1fr;
+      grid-template-columns: 380px 1fr;
       gap: 16px;
       align-items: start;
     }
-    .stack {
-      display: grid;
-      gap: 12px;
-    }
+    .stack { display: grid; gap: 12px; }
     label {
       display: block;
       font-size: .9rem;
@@ -182,25 +173,7 @@ HTML_TEMPLATE = """
       cursor: pointer;
       transition: transform .12s ease, filter .12s ease;
     }
-    .btn:hover {
-      transform: translateY(-1px);
-      filter: saturate(1.07);
-    }
-    .presets {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-top: 4px;
-    }
-    .preset {
-      border: 1px solid #ccbca6;
-      background: #fff7ed;
-      color: #533f2f;
-      border-radius: 999px;
-      padding: 4px 9px;
-      font-size: .76rem;
-      cursor: pointer;
-    }
+    .btn:hover { transform: translateY(-1px); filter: saturate(1.07); }
     .mono { font-family: "JetBrains Mono", monospace; }
     .error {
       border-left: 4px solid var(--bad);
@@ -222,15 +195,8 @@ HTML_TEMPLATE = """
       background: #faf8f3;
       padding: 10px 10px 10px 12px;
     }
-    .metric .k {
-      color: #645f58;
-      font-size: .78rem;
-      margin-bottom: 4px;
-    }
-    .metric .v {
-      font-size: 1.08rem;
-      font-weight: 700;
-    }
+    .metric .k { color: #645f58; font-size: .78rem; margin-bottom: 4px; }
+    .metric .v { font-size: 1.08rem; font-weight: 700; }
     .ok { color: var(--ok); }
     .bad { color: var(--bad); }
     .sub-grid {
@@ -248,28 +214,16 @@ HTML_TEMPLATE = """
       line-height: 1.45;
       color: #3c3a36;
     }
-    .box h3 {
-      margin: 0 0 6px;
-      font-size: .95rem;
-    }
-    .charts {
-      display: grid;
-      gap: 12px;
-    }
-    figure {
-      margin: 0;
-    }
+    .box h3 { margin: 0 0 6px; font-size: .95rem; }
+    .charts { display: grid; gap: 12px; }
+    figure { margin: 0; }
     figure img {
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 10px;
       background: #fff;
     }
-    figcaption {
-      color: #635d55;
-      font-size: .8rem;
-      margin-top: 4px;
-    }
+    figcaption { color: #635d55; font-size: .8rem; margin-top: 4px; }
     .table-wrap {
       margin-top: 10px;
       max-height: 280px;
@@ -278,11 +232,7 @@ HTML_TEMPLATE = """
       border-radius: 10px;
       background: #fff;
     }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: .84rem;
-    }
+    table { width: 100%; border-collapse: collapse; font-size: .84rem; }
     th {
       text-align: left;
       position: sticky;
@@ -296,11 +246,7 @@ HTML_TEMPLATE = """
       padding: 8px;
       vertical-align: top;
     }
-    .empty {
-      color: #605b53;
-      line-height: 1.55;
-      font-size: .92rem;
-    }
+    .empty { color: #605b53; line-height: 1.55; font-size: .92rem; }
     @media (max-width: 980px) {
       .layout { grid-template-columns: 1fr; }
       .steps { grid-template-columns: 1fr; }
@@ -313,16 +259,24 @@ HTML_TEMPLATE = """
   <main class="wrap">
     <section class="card intro">
       <h1>Armory Lab BAI Console</h1>
-      <p class="lead">Best Arm Identification をブラウザで体験する画面です。左で設定、右で「どの腕を最良と判断したか」と「どれだけ試行したか」を確認できます。</p>
+      <p class="lead">env と objective を切り替えて、最強武器の定義を比較できます（DPS最強 / ワンパン最強）。</p>
       <div class="steps">
-        <div class="step"><b>Step 1: 設定する</b>アルゴリズム、腕の本数、delta、平均生成ルールを決めます。</div>
-        <div class="step"><b>Step 2: 実行する</b>Runボタンを押すと、fixed-confidence BAI が停止条件まで進みます。</div>
-        <div class="step"><b>Step 3: 読み取る</b>推奨腕、停止時刻、CI推移、サンプル配分から挙動を確認します。</div>
+        <div class="step"><b>Step 1: 環境を選ぶ</b>Bernoulli または weapon_damage を選びます。</div>
+        <div class="step"><b>Step 2: 目的を選ぶ</b>DPS最大か、閾値到達確率最大かを選びます。</div>
+        <div class="step"><b>Step 3: 結果を読む</b>推奨腕、停止時刻、CI推移、サンプル配分を確認します。</div>
       </div>
     </section>
 
     <section class="layout">
       <form class="card stack" method="post">
+        <div>
+          <label for="env">環境</label>
+          <select id="env" name="env">
+            <option value="bernoulli" {% if form.env == "bernoulli" %}selected{% endif %}>bernoulli</option>
+            <option value="weapon_damage" {% if form.env == "weapon_damage" %}selected{% endif %}>weapon_damage</option>
+          </select>
+        </div>
+
         <div>
           <label for="algo">アルゴリズム</label>
           <select id="algo" name="algo">
@@ -330,52 +284,54 @@ HTML_TEMPLATE = """
             <option value="se" {% if form.algo == "se" %}selected{% endif %}>Successive Elimination</option>
             <option value="tas" {% if form.algo == "tas" %}selected{% endif %}>Track-and-Stop</option>
           </select>
-          <span class="hint">迷ったら LUCB、難しい設定を試すなら Track-and-Stop も有効です。</span>
+        </div>
+
+        <div>
+          <label for="objective">objective</label>
+          <select id="objective" name="objective">
+            <option value="dps" {% if form.objective == "dps" %}selected{% endif %}>dps (期待ダメージ)</option>
+            <option value="oneshot" {% if form.objective == "oneshot" %}selected{% endif %}>oneshot (到達確率)</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="threshold">threshold (oneshot時に必須)</label>
+          <input id="threshold" name="threshold" type="number" step="0.1" value="{{ form.threshold }}" />
         </div>
 
         <div>
           <label for="k">K (腕の本数)</label>
           <input id="k" name="k" type="number" min="2" max="80" value="{{ form.k }}" />
-          <span class="hint">腕インデックスは 0 から K-1 です。</span>
         </div>
 
         <div>
-          <label for="delta">delta (許容誤り確率)</label>
+          <label for="delta">delta</label>
           <input id="delta" name="delta" type="number" step="0.001" min="0.001" max="0.999" value="{{ form.delta }}" />
-          <span class="hint">小さいほど厳密になり、停止までの試行数は増えやすくなります。</span>
         </div>
 
         <div>
-          <label for="means">means レジーム</label>
-          <input id="means" name="means" type="text" list="means-presets" value="{{ form.means }}" />
-          <datalist id="means-presets">
-            <option value="random"></option>
-            <option value="topgap:0.05"></option>
-            <option value="topgap:0.1"></option>
-            <option value="two-groups"></option>
-          </datalist>
-          <span class="hint">例: random / two-groups / topgap:0.07</span>
-          <div class="presets">
-            <button class="preset" type="button" onclick="setMeansPreset('random')">random</button>
-            <button class="preset" type="button" onclick="setMeansPreset('topgap:0.05')">topgap:0.05</button>
-            <button class="preset" type="button" onclick="setMeansPreset('topgap:0.10')">topgap:0.10</button>
-            <button class="preset" type="button" onclick="setMeansPreset('two-groups')">two-groups</button>
-          </div>
+          <label for="means">bernoulli means regime</label>
+          <input id="means" name="means" type="text" value="{{ form.means }}" />
+          <span class="hint">例: random / topgap:0.05 / two-groups</span>
+        </div>
+
+        <div>
+          <label for="pack">weapon pack regime</label>
+          <input id="pack" name="pack" type="text" value="{{ form.pack }}" />
+          <span class="hint">例: random / topgap:8 / archetypes</span>
         </div>
 
         <div>
           <label for="seed">seed</label>
           <input id="seed" name="seed" type="number" value="{{ form.seed }}" />
-          <span class="hint">同じ seed と設定なら同じ結果になります。</span>
         </div>
 
         <div>
-          <label for="max_pulls">max pulls (安全上限)</label>
+          <label for="max_pulls">max pulls</label>
           <input id="max_pulls" name="max_pulls" type="number" min="1000" max="1000000" value="{{ form.max_pulls }}" />
-          <span class="hint">停止しない場合の打ち切り上限です。</span>
         </div>
 
-        <button id="run-button" class="btn" type="submit">Run Appraisal</button>
+        <button class="btn" type="submit">Run Appraisal</button>
       </form>
 
       <section class="card">
@@ -385,7 +341,7 @@ HTML_TEMPLATE = """
           <div class="metric-row">
             <article class="metric">
               <div class="k">推奨腕</div>
-              <div class="v mono">{{ out.result.recommend_arm }}</div>
+              <div class="v mono">{{ out.recommend_arm }}</div>
             </article>
             <article class="metric">
               <div class="k">真の最良腕</div>
@@ -393,24 +349,27 @@ HTML_TEMPLATE = """
             </article>
             <article class="metric">
               <div class="k">判定一致</div>
-              <div class="v {% if out.result.recommend_arm == out.true_best %}ok{% else %}bad{% endif %}">
-                {% if out.result.recommend_arm == out.true_best %}YES{% else %}NO{% endif %}
+              <div class="v {% if out.recommend_arm == out.true_best %}ok{% else %}bad{% endif %}">
+                {% if out.recommend_arm == out.true_best %}YES{% else %}NO{% endif %}
               </div>
             </article>
             <article class="metric">
               <div class="k">停止時の総試行数</div>
-              <div class="v mono">{{ out.result.total_pulls }}</div>
+              <div class="v mono">{{ out.total_pulls }}</div>
             </article>
           </div>
 
           <div class="sub-grid">
             <section class="box">
               <h3>実行サマリ</h3>
-              <div class="mono">algo={{ out.config["algo"] }} / K={{ out.config["k"] }} / delta={{ out.config["delta"] }} / means={{ out.config["means"] }} / seed={{ out.config["seed"] }}</div>
+              <div class="mono">
+                env={{ out.config["env"] }} / objective={{ out.config["objective"] }} / threshold={{ out.config["threshold"] if out.config["threshold"] else "-" }}<br>
+                algo={{ out.config["algo"] }} / K={{ out.config["k"] }} / delta={{ out.config["delta"] }} / seed={{ out.config["seed"] }}
+              </div>
               <div style="margin-top:6px;"><b>停止理由:</b> {{ out.stop_reason }}</div>
             </section>
             <section class="box">
-              <h3>真の平均 上位5腕</h3>
+              <h3>真の objective 値 上位5腕</h3>
               <div class="mono">
                 {% for arm_idx, mu in out.top_true_arms %}
                   arm {{ arm_idx }}: {{ "%.4f"|format(mu) }}<br>
@@ -422,11 +381,11 @@ HTML_TEMPLATE = """
           <div class="charts">
             <figure>
               <img src="data:image/png;base64,{{ out.ci_plot_b64 }}" alt="CI trajectory" />
-              <figcaption>CI推移: 線が推定平均、帯が信頼区間。右端の時点で停止しています。</figcaption>
+              <figcaption>{{ out.metric_label }} の推移と信頼区間（停止時点まで）。</figcaption>
             </figure>
             <figure>
               <img src="data:image/png;base64,{{ out.alloc_plot_b64 }}" alt="Allocation" />
-              <figcaption>サンプル配分: アルゴリズムがどの腕を重点的に引いたかを示します。</figcaption>
+              <figcaption>サンプル配分（どの腕を重点的に引いたか）。</figcaption>
             </figure>
           </div>
 
@@ -458,21 +417,12 @@ HTML_TEMPLATE = """
         {% else %}
           <div class="empty">
             左のフォームを設定して <span class="mono">Run Appraisal</span> を押してください。<br>
-            最初は <span class="mono">algo=lucb, K=20, delta=0.05, means=topgap:0.05</span> が見やすいです。
+            例: <span class="mono">env=weapon_damage / objective=oneshot / threshold=100</span>
           </div>
         {% endif %}
       </section>
     </section>
   </main>
-
-  <script>
-    function setMeansPreset(value) {
-      const input = document.getElementById("means");
-      if (input) {
-        input.value = value;
-      }
-    }
-  </script>
 </body>
 </html>
 """
@@ -485,7 +435,7 @@ def _fig_to_base64(fig: plt.Figure) -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-def _build_ci_plot(history: list[HistoryRecord], n_arms: int) -> str:
+def _build_ci_plot(history: list[HistoryRecord], n_arms: int, metric_label: str) -> str:
     x = np.asarray([item.total_pulls for item in history], dtype=np.float64)
     fig, ax = plt.subplots(figsize=(10, 4))
     cmap = plt.get_cmap("tab20")
@@ -500,17 +450,17 @@ def _build_ci_plot(history: list[HistoryRecord], n_arms: int) -> str:
     ax.axvline(float(x[-1]), linestyle="--", color="#C8553D", linewidth=1.2)
     ax.set_title("Confidence Interval Trajectories", fontsize=11)
     ax.set_xlabel("total pulls")
-    ax.set_ylabel("mean +/- CI")
-    ax.set_ylim(-0.02, 1.02)
+    ax.set_ylabel(f"{metric_label} +/- CI")
     ax.grid(alpha=0.2, linestyle=":")
     return _fig_to_base64(fig)
 
 
-def _build_allocation_plot(result: BAIResult) -> str:
-    n_arms = int(result.pulls_per_arm.size)
+def _build_allocation_plot(pulls_per_arm: list[int]) -> str:
+    arr = np.asarray(pulls_per_arm, dtype=np.int_)
+    n_arms = int(arr.size)
     idx = np.arange(n_arms)
     fig, ax = plt.subplots(figsize=(10, 3.5))
-    ax.bar(idx, result.pulls_per_arm, color="#1D4E89")
+    ax.bar(idx, arr, color="#1D4E89")
     ax.set_title("Sample Allocation", fontsize=11)
     ax.set_xlabel("arm")
     ax.set_ylabel("pull count")
@@ -520,10 +470,33 @@ def _build_allocation_plot(result: BAIResult) -> str:
     return _fig_to_base64(fig)
 
 
-def _parse_and_validate(form: dict[str, str]) -> tuple[str, int, float, str, int, int]:
+def _parse_and_validate(form: dict[str, str]) -> tuple[str, str, str, float | None, int, float, str, str, int, int]:
+    env_name = form["env"].strip().lower()
+    if env_name not in {"bernoulli", "weapon_damage"}:
+        raise ValueError("env は bernoulli か weapon_damage を指定してください")
+
     algo = form["algo"].strip().lower()
     if algo not in {"lucb", "se", "tas"}:
         raise ValueError("algo は lucb / se / tas を指定してください")
+
+    objective = form["objective"].strip().lower()
+    if objective not in {"dps", "oneshot"}:
+        raise ValueError("objective は dps / oneshot を指定してください")
+
+    threshold: float | None = None
+    threshold_raw = form["threshold"].strip()
+    if objective == "oneshot":
+        if threshold_raw == "":
+            raise ValueError("oneshot objective では threshold が必須です")
+        try:
+            threshold = float(threshold_raw)
+        except ValueError as exc:
+            raise ValueError("threshold は数値で指定してください") from exc
+    elif threshold_raw != "":
+        try:
+            threshold = float(threshold_raw)
+        except ValueError as exc:
+            raise ValueError("threshold は数値で指定してください") from exc
 
     try:
         k = int(form["k"])
@@ -541,7 +514,11 @@ def _parse_and_validate(form: dict[str, str]) -> tuple[str, int, float, str, int
 
     means_spec = form["means"].strip()
     if means_spec == "":
-        raise ValueError("means は空欄にできません")
+        raise ValueError("means regime は空欄にできません")
+
+    weapon_spec = form["pack"].strip()
+    if weapon_spec == "":
+        raise ValueError("weapon pack regime は空欄にできません")
 
     try:
         seed = int(form["seed"])
@@ -555,7 +532,7 @@ def _parse_and_validate(form: dict[str, str]) -> tuple[str, int, float, str, int
     if max_pulls < 1000 or max_pulls > 1_000_000:
         raise ValueError("max_pulls は 1000 以上 1000000 以下で指定してください")
 
-    return algo, k, delta, means_spec, seed, max_pulls
+    return env_name, algo, objective, threshold, k, delta, means_spec, weapon_spec, seed, max_pulls
 
 
 def _to_round_preview(history: list[HistoryRecord], take_last: int = 12) -> list[RoundPreview]:
@@ -574,21 +551,37 @@ def _to_round_preview(history: list[HistoryRecord], take_last: int = 12) -> list
     return previews
 
 
-def _run_experiment(form: dict[str, str]) -> WebRunResult:
-    algo, k, delta, means_spec, seed, max_pulls = _parse_and_validate(form)
+def _metric_label(env_name: str, objective: str) -> str:
+    if objective == "oneshot":
+        return "hit-rate"
+    if env_name == "weapon_damage":
+        return "expected damage"
+    return "mean reward"
 
-    rng = np.random.default_rng(seed)
-    means = generate_means(means_spec, k, rng)
-    env = BernoulliBandit.from_means(means, rng=rng)
-    algo_impl = build_algo(algo, delta, max_pulls)
-    result = algo_impl.run(env, track_history=True)
-    true_best = int(np.argmax(means))
+
+def _run_experiment(form: dict[str, str]) -> WebRunResult:
+    env_name, algo, objective, threshold, k, delta, means_spec, weapon_spec, seed, max_pulls = _parse_and_validate(form)
+
+    config = RunConfig(
+        algo=algo,
+        env_name=env_name,
+        objective=objective,
+        threshold=threshold,
+        k=k,
+        delta=delta,
+        means_spec=means_spec,
+        weapon_spec=weapon_spec,
+        seed=seed,
+        max_pulls=max_pulls,
+    )
+    result, true_values, true_best = run_once(config, track_history=True)
 
     if not result.history:
         raise RuntimeError("history が空です。実行に失敗しました")
 
-    ci_plot = _build_ci_plot(result.history, k)
-    alloc_plot = _build_allocation_plot(result)
+    metric_label = _metric_label(env_name, objective)
+    ci_plot = _build_ci_plot(result.history, k, metric_label=metric_label)
+    alloc_plot = _build_allocation_plot(result.pulls_per_arm.tolist())
     previews = _to_round_preview(result.history, take_last=12)
     stop_reason = (
         "max_pulls に到達したため打ち切り停止"
@@ -596,28 +589,21 @@ def _run_experiment(form: dict[str, str]) -> WebRunResult:
         else "信頼区間の停止条件を満たしたため停止"
     )
 
-    top_idx = np.argsort(means)[::-1][: min(5, k)]
-    top_true_arms = [(int(i), float(means[int(i)])) for i in top_idx]
-
-    normalized_config = {
-        "algo": algo,
-        "k": str(k),
-        "delta": str(delta),
-        "means": means_spec,
-        "seed": str(seed),
-        "max_pulls": str(max_pulls),
-    }
+    top_idx = np.argsort(true_values)[::-1][: min(5, k)]
+    top_true_arms = [(int(i), float(true_values[int(i)])) for i in top_idx]
 
     return WebRunResult(
-        config=normalized_config,
-        result=result,
-        means=means,
+        config=form.copy(),
+        recommend_arm=result.recommend_arm,
         true_best=true_best,
+        total_pulls=result.total_pulls,
+        pulls_per_arm=result.pulls_per_arm.tolist(),
         ci_plot_b64=ci_plot,
         alloc_plot_b64=alloc_plot,
         rounds_preview=previews,
         stop_reason=stop_reason,
         top_true_arms=top_true_arms,
+        metric_label=metric_label,
     )
 
 
