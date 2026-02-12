@@ -12,7 +12,7 @@ from armory_lab.run import build_algo, generate_means
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Weapon appraisal demo with fixed-confidence BAI")
-    parser.add_argument("--algo", default="lucb", choices=["lucb", "se"])
+    parser.add_argument("--algo", default="lucb", choices=["lucb", "se", "tas"])
     parser.add_argument("--delta", type=float, default=0.05)
     parser.add_argument("--means", type=str, default="topgap:0.08")
     parser.add_argument("--seed", type=int, default=0)

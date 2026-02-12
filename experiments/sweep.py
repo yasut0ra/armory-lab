@@ -21,7 +21,7 @@ def parse_float_list(text: str) -> list[float]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run BAI parameter sweep and export CSV")
-    parser.add_argument("--algo", default="lucb", choices=["lucb", "se"])
+    parser.add_argument("--algo", default="lucb", choices=["lucb", "se", "tas"])
     parser.add_argument("--K-values", type=str, default="10,20")
     parser.add_argument("--deltas", type=str, default="0.05,0.1")
     parser.add_argument("--gaps", type=str, default="0.05,0.1")

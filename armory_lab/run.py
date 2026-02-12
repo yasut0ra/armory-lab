@@ -13,6 +13,7 @@ from numpy.typing import NDArray
 from armory_lab.algos.base import BAIResult
 from armory_lab.algos.lucb import LUCB
 from armory_lab.algos.successive_elimination import SuccessiveElimination
+from armory_lab.algos.track_and_stop import TrackAndStop
 from armory_lab.envs.bernoulli import BernoulliBandit
 from armory_lab.plotting import plot_history
 
@@ -119,12 +120,14 @@ def generate_means(spec: str, k: int, rng: np.random.Generator) -> NDArray[np.fl
     raise ValueError(f"unknown means regime: {spec}")
 
 
-def build_algo(name: str, delta: float, max_pulls: int) -> LUCB | SuccessiveElimination:
+def build_algo(name: str, delta: float, max_pulls: int) -> LUCB | SuccessiveElimination | TrackAndStop:
     normalized = name.lower()
     if normalized == "lucb":
         return LUCB(delta=delta, max_pulls=max_pulls)
     if normalized in {"se", "successive_elimination", "successive-elimination"}:
         return SuccessiveElimination(delta=delta, max_pulls=max_pulls)
+    if normalized in {"tas", "track_and_stop", "track-and-stop"}:
+        return TrackAndStop(delta=delta, max_pulls=max_pulls)
     raise ValueError(f"unknown algorithm: {name}")
 
 
@@ -242,7 +245,11 @@ def write_trials_csv(path: str, trials: Sequence[TrialRun]) -> None:
 
 def parse_args() -> RunConfig:
     parser = argparse.ArgumentParser(description="Fixed-confidence BAI runner")
-    parser.add_argument("--algo", default="lucb", choices=["lucb", "se", "successive_elimination"])
+    parser.add_argument(
+        "--algo",
+        default="lucb",
+        choices=["lucb", "se", "successive_elimination", "tas", "track_and_stop"],
+    )
     parser.add_argument("--K", type=int, default=20)
     parser.add_argument("--delta", type=float, default=0.05)
     parser.add_argument("--means", type=str, default="random")

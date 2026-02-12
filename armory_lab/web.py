@@ -328,8 +328,9 @@ HTML_TEMPLATE = """
           <select id="algo" name="algo">
             <option value="lucb" {% if form.algo == "lucb" %}selected{% endif %}>LUCB</option>
             <option value="se" {% if form.algo == "se" %}selected{% endif %}>Successive Elimination</option>
+            <option value="tas" {% if form.algo == "tas" %}selected{% endif %}>Track-and-Stop</option>
           </select>
-          <span class="hint">迷ったら LUCB から始めるのがおすすめです。</span>
+          <span class="hint">迷ったら LUCB、難しい設定を試すなら Track-and-Stop も有効です。</span>
         </div>
 
         <div>
@@ -521,8 +522,8 @@ def _build_allocation_plot(result: BAIResult) -> str:
 
 def _parse_and_validate(form: dict[str, str]) -> tuple[str, int, float, str, int, int]:
     algo = form["algo"].strip().lower()
-    if algo not in {"lucb", "se"}:
-        raise ValueError("algo は lucb か se を指定してください")
+    if algo not in {"lucb", "se", "tas"}:
+        raise ValueError("algo は lucb / se / tas を指定してください")
 
     try:
         k = int(form["k"])

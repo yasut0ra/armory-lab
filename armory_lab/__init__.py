@@ -3,6 +3,7 @@
 from armory_lab.algos.base import BAIResult, HistoryRecord
 from armory_lab.algos.lucb import LUCB
 from armory_lab.algos.successive_elimination import SuccessiveElimination
+from armory_lab.algos.track_and_stop import TrackAndStop
 from armory_lab.envs.bernoulli import BernoulliBandit
 
 __all__ = [
@@ -10,5 +11,6 @@ __all__ = [
     "HistoryRecord",
     "LUCB",
     "SuccessiveElimination",
+    "TrackAndStop",
     "BernoulliBandit",
 ]

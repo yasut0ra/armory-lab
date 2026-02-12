@@ -6,7 +6,7 @@
 ## このリポジトリでできること
 
 - Bernoulli bandit 環境で最良腕を同定
-- アルゴリズム: `LUCB` / `Successive Elimination`
+- アルゴリズム: `LUCB` / `Successive Elimination` / `Track-and-Stop`
 - 指標: 誤識別率、停止時刻（総試行数）、腕ごとのサンプル配分
 - 可視化: CI推移、サンプル配分、停止時点
 - 実行手段: CLI / Web UI / 武器鑑定デモ / 実験スイープ
@@ -64,6 +64,8 @@ python -m armory_lab.run --algo se --K 15 --means two-groups --plot --save-plot 
 - `--seed-step`: 試行ごとのseed増分
 - `--output-csv`: 試行ごとの結果をCSV保存
 - `--json`: 結果をJSONで出力（他ツール連携向け）
+
+`--algo` は `lucb`, `se`, `tas`（Track-and-Stop）を選べます。
 
 固定の平均で1回だけ実行:
 
@@ -128,6 +130,9 @@ CSV列:
 - `LUCB`
   - 現在の最良推定腕と最有力対抗腕を重点サンプリング
   - `LCB(best) >= UCB(challenger)` で停止
+- `Track-and-Stop`
+  - 経験平均からサンプル配分を追従（tracking）しつつ引く
+  - Bernoulli KL に基づく GLR 統計がしきい値を超えたら停止
 
 どちらも fixed-confidence 設定で停止し、次を返します。
 
