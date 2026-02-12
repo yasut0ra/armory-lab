@@ -1,81 +1,75 @@
 # armory-lab
 
-研究寄りの Best Arm Identification (BAI) ツールキット + 見て楽しい武器鑑定デモです。  
-Python で fixed-confidence (PAC) 設定の最良腕同定を最小構成で実装しています。
+固定信頼度 (fixed-confidence, PAC) の Best Arm Identification (BAI) を、
+「研究コードとして読みやすく」「デモとして触って楽しい」を両立する最小構成で実装したリポジトリです。
 
-## 実装済みMVP
+## このリポジトリでできること
 
-- 環境: Bernoulli bandit (`mu` ごとに Bernoulli 報酬)
-- fixed-confidence BAI アルゴリズム:
-  - `Successive Elimination` (Action Elimination)
-  - `LUCB`
-- 信頼区間: Hoeffding 型 + 時刻依存の信頼割当
-  - `delta_{i,t} = delta / (2 K t^2)` を使い、`sum_{i,t} delta_{i,t} <= delta` を満たす
-- メトリクス:
-  - 誤識別率
-  - 停止時刻（総サンプル数）
-  - 各腕のサンプル配分
-- 可視化 (`matplotlib`):
-  - CI推移
-  - サンプル配分
-  - 停止時点
+- Bernoulli bandit 環境で最良腕を同定
+- アルゴリズム: `LUCB` / `Successive Elimination`
+- 指標: 誤識別率、停止時刻（総試行数）、腕ごとのサンプル配分
+- 可視化: CI推移、サンプル配分、停止時点
+- 実行手段: CLI / Web UI / 武器鑑定デモ / 実験スイープ
 
-## セットアップ
+## 1分セットアップ
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
-pip install -e .[dev]
+pip install -e '.[dev]'
 ```
 
-## CLI 実行
-
-```bash
-python -m armory_lab.run --algo lucb --K 20 --delta 0.05 --means topgap:0.05 --seed 0 --plot
-```
-
-`--means` は以下をサポート:
-
-- `random`: `mu ~ Uniform(0,1)`
-- `topgap:x`: `best=0.5+x`, `second=0.5`, その他はその下
-- `two-groups`: 上位群/下位群の2群で `mu` を生成
-
-plot 保存例:
-
-```bash
-python -m armory_lab.run --algo se --K 15 --means two-groups --plot --save-plot artifacts/se_two_groups.png --no-show
-```
-
-## デモ（武器鑑定）
-
-```bash
-python demo/weapon_appraisal.py --algo lucb --delta 0.05 --seed 0 --plot
-```
-
-ラウンドごとに以下を表示します:
-
-- 試した武器
-- 推定値と信頼区間
-- 候補武器の絞り込み
-
-最後に「最強武器を鑑定完了（delta=...）」と試行回数、サンプル配分を表示します。
-
-## Webフロント
-
-ブラウザUIでパラメータを触りながら実行できます。
+## 最初に触るなら Web UI
 
 ```bash
 python -m armory_lab.web --host 127.0.0.1 --port 7860
 ```
 
-アクセス先: `http://127.0.0.1:7860`
+- アクセス先: `http://127.0.0.1:7860`
+- 画面左: パラメータ入力
+- 画面右: 推奨腕、停止理由、CI推移、サンプル配分
 
-- フォームで `algo / K / delta / means / seed` を調整
-- 実行結果のサマリ（推奨腕、正誤、停止時刻）
-- CI推移とサンプル配分をその場で可視化
+### Web UI でよく使う入力例
 
-## 実験スイープ
+- `means=random`: 難易度が毎回変わる
+- `means=topgap:0.05`: 1位と2位が近く、やや難しい
+- `means=topgap:0.10`: ギャップが大きく、停止が早い
+- `means=two-groups`: 上位群と下位群に分かれる
+
+### 結果の見方
+
+- `推奨腕`: アルゴリズムが最良と判断した腕
+- `真の最良腕`: 生成した真の平均での最良腕
+- `停止時の総試行数`: 判定までに必要だったサンプル数
+- `CI推移`: 推定平均と信頼区間の時間推移
+- `サンプル配分`: どの腕を重点的に引いたか
+
+## CLI で実行
+
+```bash
+python -m armory_lab.run --algo lucb --K 20 --delta 0.05 --means topgap:0.05 --seed 0 --plot
+```
+
+画像保存だけしたい場合:
+
+```bash
+python -m armory_lab.run --algo se --K 15 --means two-groups --plot --save-plot artifacts/se_two_groups.png --no-show
+```
+
+## 武器鑑定デモ (ログ重視)
+
+```bash
+python demo/weapon_appraisal.py --algo lucb --delta 0.05 --seed 0 --plot
+```
+
+各ラウンドで以下を表示します。
+
+- どの武器を試したか
+- 推定値と信頼区間
+- 候補がどう絞られていくか
+
+## 実験スイープ (CSV出力)
 
 ```bash
 python experiments/sweep.py \
@@ -87,7 +81,7 @@ python experiments/sweep.py \
   --output experiments/sweep_results.csv
 ```
 
-CSV 出力:
+CSV列:
 
 - `mean_total_pulls`
 - `misidentification_rate`
@@ -95,7 +89,30 @@ CSV 出力:
 
 ## アルゴリズム概要
 
-- `Successive Elimination`: 残存腕をラウンドごとに引き、CIに基づいて劣る腕を除去
-- `LUCB`: 現在の最良推定腕とその最有力対抗腕を重点的に引き、`LCB(best) >= UCB(others)` で停止
+- `Successive Elimination`
+  - 残っている腕をラウンドで順に引く
+  - CIで明確に劣る腕を除去
+  - 1本になったら停止
+- `LUCB`
+  - 現在の最良推定腕と最有力対抗腕を重点サンプリング
+  - `LCB(best) >= UCB(challenger)` で停止
 
-どちらも fixed-confidence で停止し、`recommend_arm`, `total_pulls`, `pulls_per_arm`, `history` を返します。
+どちらも fixed-confidence 設定で停止し、次を返します。
+
+- `recommend_arm`
+- `total_pulls`
+- `pulls_per_arm`
+- `history`
+
+## 信頼区間の設計
+
+Hoeffding型の信頼半径を使い、
+時刻依存の割当として `delta_{i,t} = delta / (2 K t^2)` を採用しています。
+この設計で `sum_{i,t} delta_{i,t} <= delta` を満たし、全時刻同時保証の形にしています。
+
+## テストと型チェック
+
+```bash
+pytest -q
+mypy armory_lab
+```

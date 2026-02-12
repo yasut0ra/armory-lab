@@ -32,5 +32,5 @@ def test_web_index_post_runs() -> None:
     )
     assert resp.status_code == 200
     body = resp.get_data(as_text=True)
-    assert "recommended arm" in body
-    assert "total pulls" in body
+    assert "推奨腕" in body
+    assert "停止時の総試行数" in body

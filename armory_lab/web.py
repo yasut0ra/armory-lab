@@ -19,6 +19,15 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 
 @dataclass(slots=True)
+class RoundPreview:
+    round_id: int
+    total_pulls: int
+    a_hat: int | None
+    selected_arms: str
+    active_count: int
+
+
+@dataclass(slots=True)
 class WebRunResult:
     config: dict[str, str]
     result: BAIResult
@@ -26,7 +35,19 @@ class WebRunResult:
     true_best: int
     ci_plot_b64: str
     alloc_plot_b64: str
-    rounds_preview: list[HistoryRecord]
+    rounds_preview: list[RoundPreview]
+    stop_reason: str
+    top_true_arms: list[tuple[int, float]]
+
+
+DEFAULT_FORM: dict[str, str] = {
+    "algo": "lucb",
+    "k": "20",
+    "delta": "0.05",
+    "means": "topgap:0.05",
+    "seed": "0",
+    "max_pulls": "200000",
+}
 
 
 HTML_TEMPLATE = """
@@ -42,32 +63,32 @@ HTML_TEMPLATE = """
   <style>
     :root {
       --bg: #f6f4ef;
-      --ink: #121212;
-      --card: #fffdf9;
-      --muted: #57534e;
-      --line: #d6d3d1;
+      --ink: #161616;
+      --card: #fffdf8;
+      --muted: #5b5651;
+      --line: #d5d0c7;
       --brand-a: #c8553d;
       --brand-b: #1d4e89;
-      --brand-c: #f2b705;
-      --ok: #1a7f37;
-      --bad: #ab1f1f;
+      --ok: #157f3a;
+      --bad: #b22222;
+      --soft: #f8f4ed;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: "Space Grotesk", sans-serif;
       color: var(--ink);
+      font-family: "Space Grotesk", sans-serif;
       background:
-        radial-gradient(circle at 8% 12%, #f6cf9f66 0, transparent 34%),
-        radial-gradient(circle at 84% 88%, #a8c9ee70 0, transparent 30%),
-        linear-gradient(155deg, #f7f4ed 0%, #efe9dd 40%, #e9f0f8 100%);
+        radial-gradient(circle at 7% 10%, #f3cc9e6f 0, transparent 35%),
+        radial-gradient(circle at 86% 86%, #a8c9ee75 0, transparent 30%),
+        linear-gradient(155deg, #f8f4eb 0%, #f0eadf 42%, #e8eff8 100%);
       min-height: 100vh;
     }
     .wrap {
-      max-width: 1200px;
+      max-width: 1240px;
       margin: 0 auto;
       padding: 24px 20px 48px;
-      animation: rise .45s ease-out;
+      animation: rise .38s ease-out;
     }
     @keyframes rise {
       from { opacity: 0; transform: translateY(12px); }
@@ -75,25 +96,48 @@ HTML_TEMPLATE = """
     }
     h1 {
       margin: 0 0 8px;
-      font-size: clamp(1.7rem, 3vw, 2.3rem);
+      font-size: clamp(1.75rem, 3.2vw, 2.4rem);
       letter-spacing: .01em;
     }
     .lead {
+      margin: 0;
       color: var(--muted);
-      margin-bottom: 22px;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: 350px 1fr;
-      gap: 18px;
-      align-items: start;
+      line-height: 1.5;
     }
     .card {
       background: var(--card);
       border: 1px solid var(--line);
       border-radius: 16px;
+      box-shadow: 0 10px 26px #0000000e;
       padding: 16px;
-      box-shadow: 0 10px 24px #0000000e;
+    }
+    .intro {
+      margin-bottom: 16px;
+    }
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .step {
+      background: var(--soft);
+      border: 1px solid #e8e0d3;
+      border-radius: 12px;
+      padding: 10px;
+      font-size: .87rem;
+      line-height: 1.45;
+    }
+    .step b {
+      display: block;
+      margin-bottom: 4px;
+      color: #2f2a24;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 370px 1fr;
+      gap: 16px;
+      align-items: start;
     }
     .stack {
       display: grid;
@@ -102,16 +146,23 @@ HTML_TEMPLATE = """
     label {
       display: block;
       font-size: .9rem;
-      color: var(--muted);
+      color: #5c574f;
       margin-bottom: 4px;
+    }
+    .hint {
+      display: block;
+      margin-top: 4px;
+      color: #7a736b;
+      font-size: .78rem;
+      line-height: 1.4;
     }
     input, select {
       width: 100%;
-      border: 1px solid #cfc8be;
+      border: 1px solid #cfc9be;
       border-radius: 10px;
       background: #fff;
-      color: #1f1f1f;
-      font-size: 0.95rem;
+      color: #1e1e1e;
+      font-size: .95rem;
       padding: 9px 10px;
       outline: none;
     }
@@ -119,60 +170,109 @@ HTML_TEMPLATE = """
       border-color: var(--brand-b);
       box-shadow: 0 0 0 3px #1d4e8920;
     }
-    button {
+    .btn {
       width: 100%;
       border: 0;
       border-radius: 12px;
       padding: 11px 12px;
       background: linear-gradient(105deg, var(--brand-a), #df6f53);
       color: #fff;
-      font-size: 0.98rem;
+      font-size: 0.99rem;
       font-weight: 700;
       cursor: pointer;
       transition: transform .12s ease, filter .12s ease;
     }
-    button:hover {
+    .btn:hover {
       transform: translateY(-1px);
-      filter: saturate(1.08);
+      filter: saturate(1.07);
+    }
+    .presets {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    .preset {
+      border: 1px solid #ccbca6;
+      background: #fff7ed;
+      color: #533f2f;
+      border-radius: 999px;
+      padding: 4px 9px;
+      font-size: .76rem;
+      cursor: pointer;
     }
     .mono { font-family: "JetBrains Mono", monospace; }
-    .row {
+    .error {
+      border-left: 4px solid var(--bad);
+      color: #5b1515;
+      background: #fff3f3;
+      padding: 10px;
+      border-radius: 8px;
+      font-size: .9rem;
+    }
+    .metric-row {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 10px;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
     }
     .metric {
       border-left: 4px solid var(--brand-b);
-      padding: 10px 10px 10px 12px;
-      background: #fbfaf6;
       border-radius: 10px;
+      background: #faf8f3;
+      padding: 10px 10px 10px 12px;
     }
     .metric .k {
+      color: #645f58;
       font-size: .78rem;
-      color: #67615a;
       margin-bottom: 4px;
     }
     .metric .v {
-      font-size: 1.1rem;
+      font-size: 1.08rem;
       font-weight: 700;
     }
     .ok { color: var(--ok); }
     .bad { color: var(--bad); }
+    .sub-grid {
+      display: grid;
+      grid-template-columns: 1.3fr .9fr;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .box {
+      border: 1px solid #ded6ca;
+      background: #fff;
+      border-radius: 10px;
+      padding: 10px;
+      font-size: .88rem;
+      line-height: 1.45;
+      color: #3c3a36;
+    }
+    .box h3 {
+      margin: 0 0 6px;
+      font-size: .95rem;
+    }
     .charts {
       display: grid;
-      grid-template-columns: 1fr;
       gap: 12px;
     }
-    .charts img {
+    figure {
+      margin: 0;
+    }
+    figure img {
       width: 100%;
-      border-radius: 10px;
       border: 1px solid var(--line);
+      border-radius: 10px;
       background: #fff;
     }
+    figcaption {
+      color: #635d55;
+      font-size: .8rem;
+      margin-top: 4px;
+    }
     .table-wrap {
-      margin-top: 12px;
-      max-height: 300px;
+      margin-top: 10px;
+      max-height: 280px;
       overflow: auto;
       border: 1px solid var(--line);
       border-radius: 10px;
@@ -181,9 +281,9 @@ HTML_TEMPLATE = """
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: .86rem;
+      font-size: .84rem;
     }
-    thead th {
+    th {
       text-align: left;
       position: sticky;
       top: 0;
@@ -191,90 +291,145 @@ HTML_TEMPLATE = """
       border-bottom: 1px solid var(--line);
       padding: 8px;
     }
-    tbody td {
-      border-bottom: 1px solid #f0ece4;
+    td {
+      border-bottom: 1px solid #f1ece4;
       padding: 8px;
       vertical-align: top;
     }
+    .empty {
+      color: #605b53;
+      line-height: 1.55;
+      font-size: .92rem;
+    }
     @media (max-width: 980px) {
-      .grid { grid-template-columns: 1fr; }
-      .row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .layout { grid-template-columns: 1fr; }
+      .steps { grid-template-columns: 1fr; }
+      .metric-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .sub-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
   <main class="wrap">
-    <h1>Armory Lab BAI Console</h1>
-    <p class="lead">fixed-confidence BAIで「最強武器」を鑑定するブラウザUI。LUCB/Successive Eliminationを即比較できます。</p>
+    <section class="card intro">
+      <h1>Armory Lab BAI Console</h1>
+      <p class="lead">Best Arm Identification をブラウザで体験する画面です。左で設定、右で「どの腕を最良と判断したか」と「どれだけ試行したか」を確認できます。</p>
+      <div class="steps">
+        <div class="step"><b>Step 1: 設定する</b>アルゴリズム、腕の本数、delta、平均生成ルールを決めます。</div>
+        <div class="step"><b>Step 2: 実行する</b>Runボタンを押すと、fixed-confidence BAI が停止条件まで進みます。</div>
+        <div class="step"><b>Step 3: 読み取る</b>推奨腕、停止時刻、CI推移、サンプル配分から挙動を確認します。</div>
+      </div>
+    </section>
 
-    <section class="grid">
+    <section class="layout">
       <form class="card stack" method="post">
         <div>
-          <label for="algo">Algorithm</label>
+          <label for="algo">アルゴリズム</label>
           <select id="algo" name="algo">
             <option value="lucb" {% if form.algo == "lucb" %}selected{% endif %}>LUCB</option>
             <option value="se" {% if form.algo == "se" %}selected{% endif %}>Successive Elimination</option>
           </select>
+          <span class="hint">迷ったら LUCB から始めるのがおすすめです。</span>
         </div>
+
         <div>
-          <label for="k">K (arms)</label>
+          <label for="k">K (腕の本数)</label>
           <input id="k" name="k" type="number" min="2" max="80" value="{{ form.k }}" />
+          <span class="hint">腕インデックスは 0 から K-1 です。</span>
         </div>
+
         <div>
-          <label for="delta">delta</label>
+          <label for="delta">delta (許容誤り確率)</label>
           <input id="delta" name="delta" type="number" step="0.001" min="0.001" max="0.999" value="{{ form.delta }}" />
+          <span class="hint">小さいほど厳密になり、停止までの試行数は増えやすくなります。</span>
         </div>
+
         <div>
-          <label for="means">means regime</label>
-          <input id="means" name="means" type="text" value="{{ form.means }}" />
+          <label for="means">means レジーム</label>
+          <input id="means" name="means" type="text" list="means-presets" value="{{ form.means }}" />
+          <datalist id="means-presets">
+            <option value="random"></option>
+            <option value="topgap:0.05"></option>
+            <option value="topgap:0.1"></option>
+            <option value="two-groups"></option>
+          </datalist>
+          <span class="hint">例: random / two-groups / topgap:0.07</span>
+          <div class="presets">
+            <button class="preset" type="button" onclick="setMeansPreset('random')">random</button>
+            <button class="preset" type="button" onclick="setMeansPreset('topgap:0.05')">topgap:0.05</button>
+            <button class="preset" type="button" onclick="setMeansPreset('topgap:0.10')">topgap:0.10</button>
+            <button class="preset" type="button" onclick="setMeansPreset('two-groups')">two-groups</button>
+          </div>
         </div>
+
         <div>
           <label for="seed">seed</label>
           <input id="seed" name="seed" type="number" value="{{ form.seed }}" />
+          <span class="hint">同じ seed と設定なら同じ結果になります。</span>
         </div>
+
         <div>
-          <label for="max_pulls">max pulls</label>
+          <label for="max_pulls">max pulls (安全上限)</label>
           <input id="max_pulls" name="max_pulls" type="number" min="1000" max="1000000" value="{{ form.max_pulls }}" />
+          <span class="hint">停止しない場合の打ち切り上限です。</span>
         </div>
-        <button type="submit">Run Appraisal</button>
-        <div class="mono" style="font-size:.8rem;color:#6b6460">means例: <code>random</code>, <code>two-groups</code>, <code>topgap:0.07</code></div>
+
+        <button id="run-button" class="btn" type="submit">Run Appraisal</button>
       </form>
 
       <section class="card">
         {% if error %}
-          <div class="bad mono">{{ error }}</div>
+          <div class="error mono">{{ error }}</div>
         {% elif out %}
-          <div class="row">
+          <div class="metric-row">
             <article class="metric">
-              <div class="k">recommended arm</div>
+              <div class="k">推奨腕</div>
               <div class="v mono">{{ out.result.recommend_arm }}</div>
             </article>
             <article class="metric">
-              <div class="k">true best arm</div>
+              <div class="k">真の最良腕</div>
               <div class="v mono">{{ out.true_best }}</div>
             </article>
             <article class="metric">
-              <div class="k">correct</div>
+              <div class="k">判定一致</div>
               <div class="v {% if out.result.recommend_arm == out.true_best %}ok{% else %}bad{% endif %}">
                 {% if out.result.recommend_arm == out.true_best %}YES{% else %}NO{% endif %}
               </div>
             </article>
             <article class="metric">
-              <div class="k">total pulls</div>
+              <div class="k">停止時の総試行数</div>
               <div class="v mono">{{ out.result.total_pulls }}</div>
             </article>
           </div>
 
-          <div class="mono" style="font-size:.84rem;margin-bottom:10px;color:#5e5852">
-            config: algo={{ out.config["algo"] }} / K={{ out.config["k"] }} / delta={{ out.config["delta"] }} / means={{ out.config["means"] }} / seed={{ out.config["seed"] }}
+          <div class="sub-grid">
+            <section class="box">
+              <h3>実行サマリ</h3>
+              <div class="mono">algo={{ out.config["algo"] }} / K={{ out.config["k"] }} / delta={{ out.config["delta"] }} / means={{ out.config["means"] }} / seed={{ out.config["seed"] }}</div>
+              <div style="margin-top:6px;"><b>停止理由:</b> {{ out.stop_reason }}</div>
+            </section>
+            <section class="box">
+              <h3>真の平均 上位5腕</h3>
+              <div class="mono">
+                {% for arm_idx, mu in out.top_true_arms %}
+                  arm {{ arm_idx }}: {{ "%.4f"|format(mu) }}<br>
+                {% endfor %}
+              </div>
+            </section>
           </div>
 
           <div class="charts">
-            <img src="data:image/png;base64,{{ out.ci_plot_b64 }}" alt="CI trajectory">
-            <img src="data:image/png;base64,{{ out.alloc_plot_b64 }}" alt="Allocation">
+            <figure>
+              <img src="data:image/png;base64,{{ out.ci_plot_b64 }}" alt="CI trajectory" />
+              <figcaption>CI推移: 線が推定平均、帯が信頼区間。右端の時点で停止しています。</figcaption>
+            </figure>
+            <figure>
+              <img src="data:image/png;base64,{{ out.alloc_plot_b64 }}" alt="Allocation" />
+              <figcaption>サンプル配分: アルゴリズムがどの腕を重点的に引いたかを示します。</figcaption>
+            </figure>
           </div>
 
-          <h3 style="margin:14px 0 8px;font-size:1rem">Recent rounds</h3>
+          <h3 style="margin:14px 0 8px;font-size:1rem">直近ラウンド</h3>
           <div class="table-wrap">
             <table>
               <thead>
@@ -288,23 +443,35 @@ HTML_TEMPLATE = """
               </thead>
               <tbody class="mono">
                 {% for row in out.rounds_preview %}
-                <tr>
-                  <td>{{ row.round_id }}</td>
-                  <td>{{ row.total_pulls }}</td>
-                  <td>{{ row.a_hat }}</td>
-                  <td>{{ row.selected_arms }}</td>
-                  <td>{{ row.active_arms|length }}</td>
-                </tr>
+                  <tr>
+                    <td>{{ row.round_id }}</td>
+                    <td>{{ row.total_pulls }}</td>
+                    <td>{{ row.a_hat }}</td>
+                    <td>{{ row.selected_arms }}</td>
+                    <td>{{ row.active_count }}</td>
+                  </tr>
                 {% endfor %}
               </tbody>
             </table>
           </div>
         {% else %}
-          <div style="color:#645f57">左の設定を調整して <span class="mono">Run Appraisal</span> を押すと、結果と可視化を表示します。</div>
+          <div class="empty">
+            左のフォームを設定して <span class="mono">Run Appraisal</span> を押してください。<br>
+            最初は <span class="mono">algo=lucb, K=20, delta=0.05, means=topgap:0.05</span> が見やすいです。
+          </div>
         {% endif %}
       </section>
     </section>
   </main>
+
+  <script>
+    function setMeansPreset(value) {
+      const input = document.getElementById("means");
+      if (input) {
+        input.value = value;
+      }
+    }
+  </script>
 </body>
 </html>
 """
@@ -328,6 +495,7 @@ def _build_ci_plot(history: list[HistoryRecord], n_arms: int) -> str:
         color = cmap(arm % 20)
         ax.plot(x, means, color=color, linewidth=1.1)
         ax.fill_between(x, lcbs, ucbs, color=color, alpha=0.08)
+
     ax.axvline(float(x[-1]), linestyle="--", color="#C8553D", linewidth=1.2)
     ax.set_title("Confidence Interval Trajectories", fontsize=11)
     ax.set_xlabel("total pulls")
@@ -351,13 +519,62 @@ def _build_allocation_plot(result: BAIResult) -> str:
     return _fig_to_base64(fig)
 
 
+def _parse_and_validate(form: dict[str, str]) -> tuple[str, int, float, str, int, int]:
+    algo = form["algo"].strip().lower()
+    if algo not in {"lucb", "se"}:
+        raise ValueError("algo は lucb か se を指定してください")
+
+    try:
+        k = int(form["k"])
+    except ValueError as exc:
+        raise ValueError("K は整数で指定してください") from exc
+    if k < 2 or k > 80:
+        raise ValueError("K は 2 以上 80 以下で指定してください")
+
+    try:
+        delta = float(form["delta"])
+    except ValueError as exc:
+        raise ValueError("delta は小数で指定してください") from exc
+    if not (0.0 < delta < 1.0):
+        raise ValueError("delta は 0 と 1 の間で指定してください")
+
+    means_spec = form["means"].strip()
+    if means_spec == "":
+        raise ValueError("means は空欄にできません")
+
+    try:
+        seed = int(form["seed"])
+    except ValueError as exc:
+        raise ValueError("seed は整数で指定してください") from exc
+
+    try:
+        max_pulls = int(form["max_pulls"])
+    except ValueError as exc:
+        raise ValueError("max_pulls は整数で指定してください") from exc
+    if max_pulls < 1000 or max_pulls > 1_000_000:
+        raise ValueError("max_pulls は 1000 以上 1000000 以下で指定してください")
+
+    return algo, k, delta, means_spec, seed, max_pulls
+
+
+def _to_round_preview(history: list[HistoryRecord], take_last: int = 12) -> list[RoundPreview]:
+    previews: list[RoundPreview] = []
+    for row in history[-take_last:]:
+        selected = ",".join(str(arm) for arm in row.selected_arms) if row.selected_arms else "-"
+        previews.append(
+            RoundPreview(
+                round_id=row.round_id,
+                total_pulls=row.total_pulls,
+                a_hat=row.a_hat,
+                selected_arms=selected,
+                active_count=len(row.active_arms),
+            )
+        )
+    return previews
+
+
 def _run_experiment(form: dict[str, str]) -> WebRunResult:
-    algo = form["algo"]
-    k = int(form["k"])
-    delta = float(form["delta"])
-    means_spec = form["means"]
-    seed = int(form["seed"])
-    max_pulls = int(form["max_pulls"])
+    algo, k, delta, means_spec, seed, max_pulls = _parse_and_validate(form)
 
     rng = np.random.default_rng(seed)
     means = generate_means(means_spec, k, rng)
@@ -367,19 +584,39 @@ def _run_experiment(form: dict[str, str]) -> WebRunResult:
     true_best = int(np.argmax(means))
 
     if not result.history:
-        raise RuntimeError("history is empty; cannot render plots")
+        raise RuntimeError("history が空です。実行に失敗しました")
 
     ci_plot = _build_ci_plot(result.history, k)
     alloc_plot = _build_allocation_plot(result)
-    preview = result.history[-12:]
+    previews = _to_round_preview(result.history, take_last=12)
+    stop_reason = (
+        "max_pulls に到達したため打ち切り停止"
+        if result.total_pulls >= max_pulls
+        else "信頼区間の停止条件を満たしたため停止"
+    )
+
+    top_idx = np.argsort(means)[::-1][: min(5, k)]
+    top_true_arms = [(int(i), float(means[int(i)])) for i in top_idx]
+
+    normalized_config = {
+        "algo": algo,
+        "k": str(k),
+        "delta": str(delta),
+        "means": means_spec,
+        "seed": str(seed),
+        "max_pulls": str(max_pulls),
+    }
+
     return WebRunResult(
-        config=form,
+        config=normalized_config,
         result=result,
         means=means,
         true_best=true_best,
         ci_plot_b64=ci_plot,
         alloc_plot_b64=alloc_plot,
-        rounds_preview=preview,
+        rounds_preview=previews,
+        stop_reason=stop_reason,
+        top_true_arms=top_true_arms,
     )
 
 
@@ -388,14 +625,7 @@ def create_app() -> Flask:
 
     @app.route("/", methods=["GET", "POST"])
     def index() -> Response | str:
-        form = {
-            "algo": "lucb",
-            "k": "20",
-            "delta": "0.05",
-            "means": "topgap:0.05",
-            "seed": "0",
-            "max_pulls": "200000",
-        }
+        form = dict(DEFAULT_FORM)
         out: WebRunResult | None = None
         error: str | None = None
 
