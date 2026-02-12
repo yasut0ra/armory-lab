@@ -380,7 +380,16 @@ HTML_TEMPLATE = """
             </section>
           </div>
 
-          <h3 style="margin:14px 0 8px;font-size:1rem">武器/腕ステータス比較</h3>
+          <h3 style="margin:14px 0 4px;font-size:1rem">武器/腕ステータス比較</h3>
+          <div style="font-size:.82rem;color:#6a655e;margin-bottom:6px;">
+            停止時点の推定 objective 値が高い順です（上ほど有力）。記号: ★=真の最良, ◎=推奨腕, ★◎=一致。
+          </div>
+          {% if out.config["env"] == "weapon_damage" %}
+            <div style="font-size:.82rem;color:#6a655e;margin-bottom:8px;line-height:1.45;">
+              weapon_damage の列定義: d0=通常ダメージ, d1=クリティカルダメージ, crit p=クリティカル確率。<br>
+              1回の攻撃は確率 (1-p) で d0、確率 p で d1。E[dmg] = d0*(1-p) + d1*p
+            </div>
+          {% endif %}
           <div class="table-wrap">
             <table>
               <thead>
@@ -587,13 +596,31 @@ def _build_status_table(
     env_name: str,
     objective: str,
     threshold: float | None,
+    recommend_arm: int,
     true_values: np.ndarray,
     true_best: int,
     mu_values: np.ndarray | None,
     d0: np.ndarray | None,
     d1: np.ndarray | None,
     p: np.ndarray | None,
+    est_counts: np.ndarray,
+    est_means: np.ndarray,
+    est_lcbs: np.ndarray,
+    est_ucbs: np.ndarray,
 ) -> tuple[list[str], list[list[str]]]:
+    order = np.argsort(est_means)[::-1]
+
+    def _marker(arm: int) -> str:
+        is_true = arm == true_best
+        is_reco = arm == recommend_arm
+        if is_true and is_reco:
+            return "★◎"
+        if is_true:
+            return "★"
+        if is_reco:
+            return "◎"
+        return ""
+
     if env_name == "weapon_damage" and d0 is not None and d1 is not None and p is not None:
         expected = d0 * (1.0 - p) + d1 * p
         oneshot_vals: np.ndarray | None = None
@@ -602,34 +629,67 @@ def _build_status_table(
             hit_d1 = (d1 >= threshold).astype(np.float64)
             oneshot_vals = p * hit_d1 + (1.0 - p) * hit_d0
 
-        headers = ["arm", "d0", "d1", "p", "E[dmg]", "P(dmg>=th)", "objective", "best?"]
+        if objective == "oneshot":
+            headers = ["rank", "mark", "arm", "pulls", "est hit", "CI", "true hit", "d0", "d1", "crit p", "E[dmg]"]
+        else:
+            headers = ["rank", "mark", "arm", "pulls", "est obj", "CI", "true obj", "d0", "d1", "crit p"]
         rows: list[list[str]] = []
-        for arm in range(int(true_values.size)):
-            prob_text = "-" if oneshot_vals is None else f"{float(oneshot_vals[arm]):.4f}"
-            rows.append(
-                [
-                    str(arm),
-                    f"{float(d0[arm]):.2f}",
-                    f"{float(d1[arm]):.2f}",
-                    f"{float(p[arm]):.4f}",
-                    f"{float(expected[arm]):.4f}",
-                    prob_text,
-                    f"{float(true_values[arm]):.4f}",
-                    "YES" if arm == true_best else "",
-                ]
-            )
+        for rank_idx, arm_idx in enumerate(order, start=1):
+            arm = int(arm_idx)
+            if objective == "oneshot":
+                est_text = f"{100.0 * float(est_means[arm]):.2f}%"
+                ci_text = f"[{100.0 * float(est_lcbs[arm]):.2f}%, {100.0 * float(est_ucbs[arm]):.2f}%]"
+                true_text = "-" if oneshot_vals is None else f"{100.0 * float(oneshot_vals[arm]):.2f}%"
+                rows.append(
+                    [
+                        str(rank_idx),
+                        _marker(arm),
+                        str(arm),
+                        str(int(est_counts[arm])),
+                        est_text,
+                        ci_text,
+                        true_text,
+                        f"{float(d0[arm]):.2f}",
+                        f"{float(d1[arm]):.2f}",
+                        f"{100.0 * float(p[arm]):.2f}%",
+                        f"{float(expected[arm]):.4f}",
+                    ]
+                )
+            else:
+                est_text = f"{float(est_means[arm]):.4f}"
+                ci_text = f"[{float(est_lcbs[arm]):.4f}, {float(est_ucbs[arm]):.4f}]"
+                true_text = f"{float(true_values[arm]):.4f}"
+                rows.append(
+                    [
+                        str(rank_idx),
+                        _marker(arm),
+                        str(arm),
+                        str(int(est_counts[arm])),
+                        est_text,
+                        ci_text,
+                        true_text,
+                        f"{float(d0[arm]):.2f}",
+                        f"{float(d1[arm]):.2f}",
+                        f"{100.0 * float(p[arm]):.2f}%",
+                    ]
+                )
         return headers, rows
 
-    headers = ["arm", "mu", "objective", "best?"]
+    headers = ["rank", "mark", "arm", "pulls", "est obj", "CI", "true obj", "mu"]
     rows = []
-    for arm in range(int(true_values.size)):
+    for rank_idx, arm_idx in enumerate(order, start=1):
+        arm = int(arm_idx)
         mu_text = "-" if mu_values is None else f"{float(mu_values[arm]):.4f}"
         rows.append(
             [
+                str(rank_idx),
+                _marker(arm),
                 str(arm),
-                mu_text,
+                str(int(est_counts[arm])),
+                f"{float(est_means[arm]):.4f}",
+                f"[{float(est_lcbs[arm]):.4f}, {float(est_ucbs[arm]):.4f}]",
                 f"{float(true_values[arm]):.4f}",
-                "YES" if arm == true_best else "",
+                mu_text,
             ]
         )
     return headers, rows
@@ -663,6 +723,7 @@ def _run_experiment(form: dict[str, str]) -> WebRunResult:
     ci_plot = _build_ci_plot(result.history, k, metric_label=metric_label)
     alloc_plot = _build_allocation_plot(result.pulls_per_arm.tolist())
     previews = _to_round_preview(result.history, take_last=12)
+    final_state = result.history[-1]
     stop_reason = (
         "max_pulls に到達したため打ち切り停止"
         if result.total_pulls >= max_pulls
@@ -681,12 +742,17 @@ def _run_experiment(form: dict[str, str]) -> WebRunResult:
         env_name=env_name,
         objective=objective,
         threshold=threshold,
+        recommend_arm=result.recommend_arm,
         true_values=true_values,
         true_best=true_best,
         mu_values=mu_values,
         d0=problem.d0,
         d1=problem.d1,
         p=problem.p,
+        est_counts=final_state.counts,
+        est_means=final_state.means,
+        est_lcbs=final_state.lcbs,
+        est_ucbs=final_state.ucbs,
     )
 
     return WebRunResult(
