@@ -5,9 +5,8 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from armory_lab.algos.base import BAIResult, HistoryRecord, RoundCallback
+from armory_lab.algos.base import BAIResult, BanditLike, HistoryRecord, RoundCallback
 from armory_lab.confidence import delta_i_t, hoeffding_radius
-from armory_lab.envs.bernoulli import BernoulliBandit
 
 
 @dataclass(slots=True)
@@ -29,25 +28,31 @@ class SuccessiveElimination:
         ucbs: NDArray[np.float64],
         n_arms: int,
         bound_step: int,
+        reward_min: float,
+        reward_max: float,
+        reward_range: float,
     ) -> None:
         local_delta = delta_i_t(self.delta, n_arms, bound_step)
         for arm in range(n_arms):
             n = int(counts[arm])
             if n == 0:
-                lcbs[arm] = 0.0
-                ucbs[arm] = 1.0
+                lcbs[arm] = reward_min
+                ucbs[arm] = reward_max
                 continue
-            radius = hoeffding_radius(n, local_delta)
-            lcbs[arm] = max(0.0, float(means[arm] - radius))
-            ucbs[arm] = min(1.0, float(means[arm] + radius))
+            radius = hoeffding_radius(n, local_delta, reward_range=reward_range)
+            lcbs[arm] = max(reward_min, float(means[arm] - radius))
+            ucbs[arm] = min(reward_max, float(means[arm] + radius))
 
     def run(
         self,
-        env: BernoulliBandit,
+        env: BanditLike,
         track_history: bool = True,
         on_round: RoundCallback | None = None,
     ) -> BAIResult:
         n_arms = env.n_arms
+        reward_min = float(env.reward_min)
+        reward_max = float(env.reward_max)
+        reward_range = float(env.reward_range)
         counts = np.zeros(n_arms, dtype=np.int_)
         sums = np.zeros(n_arms, dtype=np.float64)
         means = np.zeros(n_arms, dtype=np.float64)
@@ -75,7 +80,17 @@ class SuccessiveElimination:
                 selected.append(arm)
 
             bound_step += 1
-            self._update_bounds(means, counts, lcbs, ucbs, n_arms, bound_step)
+            self._update_bounds(
+                means,
+                counts,
+                lcbs,
+                ucbs,
+                n_arms,
+                bound_step,
+                reward_min,
+                reward_max,
+                reward_range,
+            )
 
             if active_arms:
                 best_lcb = float(np.max(lcbs[np.asarray(active_arms, dtype=np.int_)]))
