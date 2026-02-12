@@ -10,7 +10,7 @@ import numpy as np
 from flask import Flask, Response, render_template_string, request
 
 from armory_lab.algos.base import HistoryRecord
-from armory_lab.run import RunConfig, run_once
+from armory_lab.run import RunConfig, build_algo, build_problem
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
@@ -38,6 +38,8 @@ class WebRunResult:
     stop_reason: str
     top_true_arms: list[tuple[int, float]]
     metric_label: str
+    status_headers: list[str]
+    status_rows: list[list[str]]
 
 
 DEFAULT_FORM: dict[str, str] = {
@@ -378,6 +380,28 @@ HTML_TEMPLATE = """
             </section>
           </div>
 
+          <h3 style="margin:14px 0 8px;font-size:1rem">武器/腕ステータス比較</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  {% for header in out.status_headers %}
+                    <th>{{ header }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody class="mono">
+                {% for row in out.status_rows %}
+                  <tr>
+                    {% for cell in row %}
+                      <td>{{ cell }}</td>
+                    {% endfor %}
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
           <div class="charts">
             <figure>
               <img src="data:image/png;base64,{{ out.ci_plot_b64 }}" alt="CI trajectory" />
@@ -559,6 +583,58 @@ def _metric_label(env_name: str, objective: str) -> str:
     return "mean reward"
 
 
+def _build_status_table(
+    env_name: str,
+    objective: str,
+    threshold: float | None,
+    true_values: np.ndarray,
+    true_best: int,
+    mu_values: np.ndarray | None,
+    d0: np.ndarray | None,
+    d1: np.ndarray | None,
+    p: np.ndarray | None,
+) -> tuple[list[str], list[list[str]]]:
+    if env_name == "weapon_damage" and d0 is not None and d1 is not None and p is not None:
+        expected = d0 * (1.0 - p) + d1 * p
+        oneshot_vals: np.ndarray | None = None
+        if threshold is not None:
+            hit_d0 = (d0 >= threshold).astype(np.float64)
+            hit_d1 = (d1 >= threshold).astype(np.float64)
+            oneshot_vals = p * hit_d1 + (1.0 - p) * hit_d0
+
+        headers = ["arm", "d0", "d1", "p", "E[dmg]", "P(dmg>=th)", "objective", "best?"]
+        rows: list[list[str]] = []
+        for arm in range(int(true_values.size)):
+            prob_text = "-" if oneshot_vals is None else f"{float(oneshot_vals[arm]):.4f}"
+            rows.append(
+                [
+                    str(arm),
+                    f"{float(d0[arm]):.2f}",
+                    f"{float(d1[arm]):.2f}",
+                    f"{float(p[arm]):.4f}",
+                    f"{float(expected[arm]):.4f}",
+                    prob_text,
+                    f"{float(true_values[arm]):.4f}",
+                    "YES" if arm == true_best else "",
+                ]
+            )
+        return headers, rows
+
+    headers = ["arm", "mu", "objective", "best?"]
+    rows = []
+    for arm in range(int(true_values.size)):
+        mu_text = "-" if mu_values is None else f"{float(mu_values[arm]):.4f}"
+        rows.append(
+            [
+                str(arm),
+                mu_text,
+                f"{float(true_values[arm]):.4f}",
+                "YES" if arm == true_best else "",
+            ]
+        )
+    return headers, rows
+
+
 def _run_experiment(form: dict[str, str]) -> WebRunResult:
     env_name, algo, objective, threshold, k, delta, means_spec, weapon_spec, seed, max_pulls = _parse_and_validate(form)
 
@@ -574,7 +650,11 @@ def _run_experiment(form: dict[str, str]) -> WebRunResult:
         seed=seed,
         max_pulls=max_pulls,
     )
-    result, true_values, true_best = run_once(config, track_history=True)
+    problem = build_problem(config, seed=seed)
+    algo_impl = build_algo(algo, delta, max_pulls)
+    result = algo_impl.run(problem.bandit, track_history=True)
+    true_values = problem.true_values
+    true_best = problem.true_best
 
     if not result.history:
         raise RuntimeError("history が空です。実行に失敗しました")
@@ -591,6 +671,23 @@ def _run_experiment(form: dict[str, str]) -> WebRunResult:
 
     top_idx = np.argsort(true_values)[::-1][: min(5, k)]
     top_true_arms = [(int(i), float(true_values[int(i)])) for i in top_idx]
+    mu_values: np.ndarray | None = None
+    if env_name == "bernoulli":
+        base_env = problem.bandit.base_env
+        if hasattr(base_env, "means"):
+            mu_values = np.asarray(base_env.means, dtype=np.float64)
+
+    status_headers, status_rows = _build_status_table(
+        env_name=env_name,
+        objective=objective,
+        threshold=threshold,
+        true_values=true_values,
+        true_best=true_best,
+        mu_values=mu_values,
+        d0=problem.d0,
+        d1=problem.d1,
+        p=problem.p,
+    )
 
     return WebRunResult(
         config=form.copy(),
@@ -604,6 +701,8 @@ def _run_experiment(form: dict[str, str]) -> WebRunResult:
         stop_reason=stop_reason,
         top_true_arms=top_true_arms,
         metric_label=metric_label,
+        status_headers=status_headers,
+        status_rows=status_rows,
     )
 
 

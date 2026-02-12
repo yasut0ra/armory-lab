@@ -34,3 +34,4 @@ def test_web_index_post_runs() -> None:
     body = resp.get_data(as_text=True)
     assert "推奨腕" in body
     assert "停止時の総試行数" in body
+    assert "武器/腕ステータス比較" in body
