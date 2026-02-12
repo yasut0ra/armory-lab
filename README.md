@@ -61,6 +61,20 @@ python demo/weapon_appraisal.py --algo lucb --delta 0.05 --seed 0 --plot
 
 最後に「最強武器を鑑定完了（delta=...）」と試行回数、サンプル配分を表示します。
 
+## Webフロント
+
+ブラウザUIでパラメータを触りながら実行できます。
+
+```bash
+python -m armory_lab.web --host 127.0.0.1 --port 7860
+```
+
+アクセス先: `http://127.0.0.1:7860`
+
+- フォームで `algo / K / delta / means / seed` を調整
+- 実行結果のサマリ（推奨腕、正誤、停止時刻）
+- CI推移とサンプル配分をその場で可視化
+
 ## 実験スイープ
 
 ```bash
