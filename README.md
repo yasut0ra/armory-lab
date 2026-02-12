@@ -15,6 +15,7 @@
   - `LUCB`
   - `Successive Elimination`
   - `Track-and-Stop`
+  - `Top-Two Thompson Sampling (ttts)`
 - 出力
   - 推奨腕、停止時刻、腕ごとのサンプル配分、履歴
 - 可視化

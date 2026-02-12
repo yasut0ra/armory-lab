@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run BAI parameter sweep and export CSV")
     parser.add_argument("--env", default="bernoulli", choices=["bernoulli", "weapon_damage"])
     parser.add_argument("--objective", default="dps", choices=["dps", "oneshot"])
-    parser.add_argument("--algo", default="lucb", choices=["lucb", "se", "tas"])
+    parser.add_argument("--algo", default="lucb", choices=["lucb", "se", "tas", "ttts"])
 
     parser.add_argument("--K-values", type=str, default="10,20")
     parser.add_argument("--deltas", type=str, default="0.05,0.1")

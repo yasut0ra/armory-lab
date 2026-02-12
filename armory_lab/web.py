@@ -302,6 +302,7 @@ HTML_TEMPLATE = """
             <option value="lucb" {% if form.algo == "lucb" %}selected{% endif %}>LUCB</option>
             <option value="se" {% if form.algo == "se" %}selected{% endif %}>Successive Elimination</option>
             <option value="tas" {% if form.algo == "tas" %}selected{% endif %}>Track-and-Stop</option>
+            <option value="ttts" {% if form.algo == "ttts" %}selected{% endif %}>Top-Two Thompson Sampling</option>
           </select>
         </div>
 
@@ -526,8 +527,8 @@ def _parse_and_validate(form: dict[str, str]) -> tuple[str, str, str, float | No
         raise ValueError("env は bernoulli か weapon_damage を指定してください")
 
     algo = form["algo"].strip().lower()
-    if algo not in {"lucb", "se", "tas"}:
-        raise ValueError("algo は lucb / se / tas を指定してください")
+    if algo not in {"lucb", "se", "tas", "ttts"}:
+        raise ValueError("algo は lucb / se / tas / ttts を指定してください")
 
     objective = form["objective"].strip().lower()
     if objective not in {"dps", "oneshot"}:

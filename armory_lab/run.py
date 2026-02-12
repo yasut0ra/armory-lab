@@ -13,6 +13,7 @@ from numpy.typing import NDArray
 from armory_lab.algos.base import BAIResult
 from armory_lab.algos.lucb import LUCB
 from armory_lab.algos.successive_elimination import SuccessiveElimination
+from armory_lab.algos.top_two_thompson_sampling import TopTwoThompsonSampling
 from armory_lab.algos.track_and_stop import TrackAndStop
 from armory_lab.envs.bernoulli import BernoulliBandit
 from armory_lab.envs.weapon_damage import WeaponDamageBandit, generate_weapon_pack
@@ -145,7 +146,7 @@ def generate_means(spec: str, k: int, rng: np.random.Generator) -> NDArray[np.fl
 
 
 
-def build_algo(name: str, delta: float, max_pulls: int) -> LUCB | SuccessiveElimination | TrackAndStop:
+def build_algo(name: str, delta: float, max_pulls: int) -> LUCB | SuccessiveElimination | TrackAndStop | TopTwoThompsonSampling:
     normalized = name.lower()
     if normalized == "lucb":
         return LUCB(delta=delta, max_pulls=max_pulls)
@@ -153,6 +154,8 @@ def build_algo(name: str, delta: float, max_pulls: int) -> LUCB | SuccessiveElim
         return SuccessiveElimination(delta=delta, max_pulls=max_pulls)
     if normalized in {"tas", "track_and_stop", "track-and-stop"}:
         return TrackAndStop(delta=delta, max_pulls=max_pulls)
+    if normalized in {"ttts", "top_two_thompson_sampling", "top-two-thompson-sampling"}:
+        return TopTwoThompsonSampling(delta=delta, max_pulls=max_pulls)
     raise ValueError(f"unknown algorithm: {name}")
 
 
@@ -350,7 +353,7 @@ def parse_args() -> RunConfig:
     parser.add_argument(
         "--algo",
         default="lucb",
-        choices=["lucb", "se", "successive_elimination", "tas", "track_and_stop"],
+        choices=["lucb", "se", "successive_elimination", "tas", "track_and_stop", "ttts", "top_two_thompson_sampling"],
     )
     parser.add_argument("--env", default="bernoulli", choices=["bernoulli", "weapon_damage"])
     parser.add_argument("--objective", default="dps", choices=["dps", "oneshot"])

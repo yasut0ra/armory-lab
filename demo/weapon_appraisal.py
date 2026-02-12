@@ -13,7 +13,7 @@ from armory_lab.run import RunConfig, build_algo, build_problem
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Weapon appraisal demo with fixed-confidence BAI")
     parser.add_argument("--env", default="weapon_damage", choices=["bernoulli", "weapon_damage"])
-    parser.add_argument("--algo", default="lucb", choices=["lucb", "se", "tas"])
+    parser.add_argument("--algo", default="lucb", choices=["lucb", "se", "tas", "ttts"])
     parser.add_argument("--objective", default="dps", choices=["dps", "oneshot"])
     parser.add_argument("--threshold", type=float, default=None)
     parser.add_argument("--K", type=int, default=10)
