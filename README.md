@@ -57,6 +57,38 @@ python -m armory_lab.run --algo lucb --K 20 --delta 0.05 --means topgap:0.05 --s
 python -m armory_lab.run --algo se --K 15 --means two-groups --plot --save-plot artifacts/se_two_groups.png --no-show
 ```
 
+### CLI の実用オプション
+
+- `--means-list`: 腕の平均を直接指定（例: `0.8,0.5,0.3,0.2`）
+- `--trials`: 複数seedで連続実行して集計
+- `--seed-step`: 試行ごとのseed増分
+- `--output-csv`: 試行ごとの結果をCSV保存
+- `--json`: 結果をJSONで出力（他ツール連携向け）
+
+固定の平均で1回だけ実行:
+
+```bash
+python -m armory_lab.run \
+  --algo lucb \
+  --means-list 0.85,0.6,0.4,0.2 \
+  --delta 0.05 \
+  --seed 0
+```
+
+100試行を一括実行してCSV保存:
+
+```bash
+python -m armory_lab.run \
+  --algo lucb \
+  --K 20 \
+  --means topgap:0.05 \
+  --delta 0.05 \
+  --seed 0 \
+  --trials 100 \
+  --seed-step 1 \
+  --output-csv reports/lucb_topgap005.csv
+```
+
 ## 武器鑑定デモ (ログ重視)
 
 ```bash
