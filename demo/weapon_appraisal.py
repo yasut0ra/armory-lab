@@ -36,7 +36,7 @@ def _metric_label(env_name: str, objective: str) -> str:
     return "mean reward"
 
 
-def _weapon_names(k: int) -> list[str]:
+def _fallback_weapon_names(k: int) -> list[str]:
     base = [
         "Sword",
         "Spear",
@@ -97,7 +97,10 @@ def main() -> None:
     algo = build_algo(args.algo, args.delta, args.max_pulls)
 
     k = problem.bandit.n_arms
-    names = _weapon_names(k)
+    if problem.weapon_names is not None:
+        names = list(problem.weapon_names)
+    else:
+        names = _fallback_weapon_names(k)
     reward_range = max(problem.bandit.reward_range, 1e-9)
     metric_label = _metric_label(args.env, args.objective)
 

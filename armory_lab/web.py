@@ -40,6 +40,8 @@ class WebRunResult:
     metric_label: str
     status_headers: list[str]
     status_rows: list[list[str]]
+    weapon_col_index: int
+    arm_metadata: list[dict[str, str]]
 
 
 DEFAULT_FORM: dict[str, str] = {
@@ -248,6 +250,21 @@ HTML_TEMPLATE = """
       padding: 8px;
       vertical-align: top;
     }
+    th.weapon-col {
+      position: sticky;
+      left: 0;
+      top: 0;
+      z-index: 3;
+      background: #f2ecdf;
+      min-width: 140px;
+    }
+    td.weapon-col {
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      background: #fff;
+      min-width: 140px;
+    }
     .empty { color: #605b53; line-height: 1.55; font-size: .92rem; }
     @media (max-width: 980px) {
       .layout { grid-template-columns: 1fr; }
@@ -395,7 +412,7 @@ HTML_TEMPLATE = """
               <thead>
                 <tr>
                   {% for header in out.status_headers %}
-                    <th>{{ header }}</th>
+                    <th class="{% if loop.index0 == out.weapon_col_index %}weapon-col{% endif %}">{{ header }}</th>
                   {% endfor %}
                 </tr>
               </thead>
@@ -403,7 +420,7 @@ HTML_TEMPLATE = """
                 {% for row in out.status_rows %}
                   <tr>
                     {% for cell in row %}
-                      <td>{{ cell }}</td>
+                      <td class="{% if loop.index0 == out.weapon_col_index %}weapon-col{% endif %}">{{ cell }}</td>
                     {% endfor %}
                   </tr>
                 {% endfor %}
@@ -603,6 +620,7 @@ def _build_status_table(
     d0: np.ndarray | None,
     d1: np.ndarray | None,
     p: np.ndarray | None,
+    weapon_names: tuple[str, ...] | None,
     est_counts: np.ndarray,
     est_means: np.ndarray,
     est_lcbs: np.ndarray,
@@ -621,6 +639,11 @@ def _build_status_table(
             return "◎"
         return ""
 
+    def _weapon_name(arm: int) -> str:
+        if weapon_names is None:
+            return f"Arm-{arm}"
+        return weapon_names[arm]
+
     if env_name == "weapon_damage" and d0 is not None and d1 is not None and p is not None:
         expected = d0 * (1.0 - p) + d1 * p
         oneshot_vals: np.ndarray | None = None
@@ -630,20 +653,23 @@ def _build_status_table(
             oneshot_vals = p * hit_d1 + (1.0 - p) * hit_d0
 
         if objective == "oneshot":
-            headers = ["rank", "mark", "arm", "pulls", "est hit", "CI", "true hit", "d0", "d1", "crit p", "E[dmg]"]
+            headers = ["Weapon", "rank", "mark", "arm", "pulls", "est hit", "CI", "true hit", "d0", "d1", "crit p", "E[dmg]"]
         else:
-            headers = ["rank", "mark", "arm", "pulls", "est obj", "CI", "true obj", "d0", "d1", "crit p"]
+            headers = ["Weapon", "rank", "mark", "arm", "pulls", "est obj", "CI", "true obj", "d0", "d1", "crit p"]
         rows: list[list[str]] = []
         for rank_idx, arm_idx in enumerate(order, start=1):
             arm = int(arm_idx)
+            marker = _marker(arm)
+            weapon_text = f"{marker} {_weapon_name(arm)}" if marker else _weapon_name(arm)
             if objective == "oneshot":
                 est_text = f"{100.0 * float(est_means[arm]):.2f}%"
                 ci_text = f"[{100.0 * float(est_lcbs[arm]):.2f}%, {100.0 * float(est_ucbs[arm]):.2f}%]"
                 true_text = "-" if oneshot_vals is None else f"{100.0 * float(oneshot_vals[arm]):.2f}%"
                 rows.append(
                     [
+                        weapon_text,
                         str(rank_idx),
-                        _marker(arm),
+                        marker,
                         str(arm),
                         str(int(est_counts[arm])),
                         est_text,
@@ -661,8 +687,9 @@ def _build_status_table(
                 true_text = f"{float(true_values[arm]):.4f}"
                 rows.append(
                     [
+                        weapon_text,
                         str(rank_idx),
-                        _marker(arm),
+                        marker,
                         str(arm),
                         str(int(est_counts[arm])),
                         est_text,
@@ -675,15 +702,18 @@ def _build_status_table(
                 )
         return headers, rows
 
-    headers = ["rank", "mark", "arm", "pulls", "est obj", "CI", "true obj", "mu"]
+    headers = ["Weapon", "rank", "mark", "arm", "pulls", "est obj", "CI", "true obj", "mu"]
     rows = []
     for rank_idx, arm_idx in enumerate(order, start=1):
         arm = int(arm_idx)
         mu_text = "-" if mu_values is None else f"{float(mu_values[arm]):.4f}"
+        marker = _marker(arm)
+        weapon_text = f"{marker} {_weapon_name(arm)}" if marker else _weapon_name(arm)
         rows.append(
             [
+                weapon_text,
                 str(rank_idx),
-                _marker(arm),
+                marker,
                 str(arm),
                 str(int(est_counts[arm])),
                 f"{float(est_means[arm]):.4f}",
@@ -749,6 +779,7 @@ def _run_experiment(form: dict[str, str]) -> WebRunResult:
         d0=problem.d0,
         d1=problem.d1,
         p=problem.p,
+        weapon_names=problem.weapon_names,
         est_counts=final_state.counts,
         est_means=final_state.means,
         est_lcbs=final_state.lcbs,
@@ -769,6 +800,14 @@ def _run_experiment(form: dict[str, str]) -> WebRunResult:
         metric_label=metric_label,
         status_headers=status_headers,
         status_rows=status_rows,
+        weapon_col_index=status_headers.index("Weapon"),
+        arm_metadata=[
+            {
+                "arm": str(arm),
+                "weapon_name": (problem.weapon_names[arm] if problem.weapon_names is not None else f"Arm-{arm}"),
+            }
+            for arm in range(k)
+        ],
     )
 
 

@@ -37,6 +37,7 @@ python -m armory_lab.web --host 127.0.0.1 --port 7860
 
 - アクセス: `http://127.0.0.1:7860`
 - `env` / `objective` / `threshold` / `algo` を切り替えて実行
+- ステータス表は `Weapon` 列（武器名）を常時表示。`weapon_damage` では `d0/d1/crit p` と合わせて比較可能
 
 ## CLI
 
@@ -82,6 +83,8 @@ python -m armory_lab.run \
 - `--output-csv`: 試行ごとの結果CSV
 - `--json`: JSON出力
 - `--means-list`: bernoulliの腕平均を直接指定
+- `--json` には `arm_metadata`（`arm`, `weapon_name`, `d0`, `d1`, `p`, `objective_value`）を含む
+- `--output-csv` には `weapon_name` 列（`weapon_damage`時は武器名配列）を含む
 
 ## レジーム
 

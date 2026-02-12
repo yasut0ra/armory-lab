@@ -35,3 +35,26 @@ def test_web_index_post_runs() -> None:
     assert "推奨腕" in body
     assert "停止時の総試行数" in body
     assert "武器/腕ステータス比較" in body
+
+
+def test_web_index_post_weapon_damage_shows_weapon_column() -> None:
+    app = create_app()
+    client = app.test_client()
+    resp = client.post(
+        "/",
+        data={
+            "env": "weapon_damage",
+            "algo": "lucb",
+            "objective": "dps",
+            "k": "8",
+            "delta": "0.1",
+            "pack": "archetypes",
+            "seed": "1",
+            "max_pulls": "30000",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "武器/腕ステータス比較" in body
+    assert "Weapon" in body
+    assert "weapon-col" in body

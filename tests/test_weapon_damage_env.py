@@ -1,4 +1,6 @@
-from armory_lab.envs.weapon_damage import WeaponDamageBandit
+import numpy as np
+
+from armory_lab.envs.weapon_damage import WeaponDamageBandit, generate_weapon_pack
 
 
 def test_weapon_damage_reproducible_with_seed() -> None:
@@ -14,3 +16,16 @@ def test_weapon_damage_reproducible_with_seed() -> None:
     out_b = [env_b.pull(arm) for arm in arm_seq]
 
     assert out_a == out_b
+
+
+def test_weapon_pack_names_reproducible_and_unique() -> None:
+    rng_a = np.random.default_rng(7)
+    rng_b = np.random.default_rng(7)
+    pack_a = generate_weapon_pack(spec="archetypes", k=24, rng=rng_a)
+    pack_b = generate_weapon_pack(spec="archetypes", k=24, rng=rng_b)
+
+    assert pack_a.weapon_names is not None
+    assert pack_a.weapon_names == pack_b.weapon_names
+    assert len(pack_a.weapon_names) == 24
+    assert len(set(pack_a.weapon_names)) == 24
+    assert all(name.strip() for name in pack_a.weapon_names)

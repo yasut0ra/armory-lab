@@ -50,6 +50,7 @@ class ProblemInstance:
     d0: NDArray[np.float64] | None = None
     d1: NDArray[np.float64] | None = None
     p: NDArray[np.float64] | None = None
+    weapon_names: tuple[str, ...] | None = None
 
 
 @dataclass(slots=True)
@@ -62,6 +63,7 @@ class TrialRun:
     d0: NDArray[np.float64] | None = None
     d1: NDArray[np.float64] | None = None
     p: NDArray[np.float64] | None = None
+    weapon_names: tuple[str, ...] | None = None
 
 
 @dataclass(slots=True)
@@ -193,6 +195,7 @@ def build_problem(config: RunConfig, seed: int) -> ProblemInstance:
             d0=weapon_env.d0.copy(),
             d1=weapon_env.d1.copy(),
             p=weapon_env.p.copy(),
+            weapon_names=weapon_env.weapon_names,
         )
 
     raise ValueError(f"unknown env: {config.env_name}")
@@ -233,6 +236,7 @@ def run_trials(config: RunConfig) -> list[TrialRun]:
                 d0=problem.d0,
                 d1=problem.d1,
                 p=problem.p,
+                weapon_names=problem.weapon_names,
             )
         )
     return trials
@@ -261,6 +265,20 @@ def summarize_trial_runs(trials: Sequence[TrialRun]) -> TrialSummary:
 
 
 def _trial_to_json_record(trial: TrialRun) -> dict[str, Any]:
+    arm_metadata: list[dict[str, Any]] = []
+    for arm in range(int(trial.means.size)):
+        row: dict[str, Any] = {
+            "arm": arm,
+            "objective_value": float(trial.means[arm]),
+        }
+        if trial.weapon_names is not None:
+            row["weapon_name"] = trial.weapon_names[arm]
+        if trial.d0 is not None and trial.d1 is not None and trial.p is not None:
+            row["d0"] = float(trial.d0[arm])
+            row["d1"] = float(trial.d1[arm])
+            row["p"] = float(trial.p[arm])
+        arm_metadata.append(row)
+
     payload: dict[str, Any] = {
         "trial_id": trial.trial_id,
         "seed": trial.seed,
@@ -270,6 +288,7 @@ def _trial_to_json_record(trial: TrialRun) -> dict[str, Any]:
         "total_pulls": trial.result.total_pulls,
         "pulls_per_arm": trial.result.pulls_per_arm.tolist(),
         "objective_values": [float(v) for v in trial.means.tolist()],
+        "arm_metadata": arm_metadata,
     }
 
     if trial.d0 is not None and trial.d1 is not None and trial.p is not None:
@@ -300,6 +319,7 @@ def write_trials_csv(path: str, trials: Sequence[TrialRun]) -> None:
         "d0",
         "d1",
         "p",
+        "weapon_name",
     ]
 
     with output_path.open("w", newline="", encoding="utf-8") as f:
@@ -319,6 +339,7 @@ def write_trials_csv(path: str, trials: Sequence[TrialRun]) -> None:
                     "d0": "" if trial.d0 is None else json.dumps([round(float(v), 6) for v in trial.d0.tolist()]),
                     "d1": "" if trial.d1 is None else json.dumps([round(float(v), 6) for v in trial.d1.tolist()]),
                     "p": "" if trial.p is None else json.dumps([round(float(v), 6) for v in trial.p.tolist()]),
+                    "weapon_name": "" if trial.weapon_names is None else json.dumps(list(trial.weapon_names)),
                 }
             )
 

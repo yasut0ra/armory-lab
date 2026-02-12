@@ -11,6 +11,17 @@ class WeaponPack:
     d0: NDArray[np.float64]
     d1: NDArray[np.float64]
     p: NDArray[np.float64]
+    weapon_names: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if self.weapon_names is None:
+            return
+        if len(self.weapon_names) != int(self.d0.size):
+            raise ValueError("weapon_names must have the same length as d0/d1/p")
+        if len(set(self.weapon_names)) != len(self.weapon_names):
+            raise ValueError("weapon_names must be unique")
+        if any(name.strip() == "" for name in self.weapon_names):
+            raise ValueError("weapon_names must be non-empty")
 
     @property
     def n_arms(self) -> int:
@@ -31,6 +42,7 @@ class WeaponDamageBandit:
     d0: NDArray[np.float64]
     d1: NDArray[np.float64]
     p: NDArray[np.float64]
+    weapon_names: tuple[str, ...]
     rng: np.random.Generator
 
     @classmethod
@@ -39,6 +51,7 @@ class WeaponDamageBandit:
         d0: list[float] | NDArray[np.float64],
         d1: list[float] | NDArray[np.float64],
         p: list[float] | NDArray[np.float64],
+        weapon_names: list[str] | tuple[str, ...] | None = None,
         seed: int | None = None,
         rng: np.random.Generator | None = None,
     ) -> "WeaponDamageBandit":
@@ -56,7 +69,8 @@ class WeaponDamageBandit:
             raise ValueError("must satisfy 0 < p < 1 for all arms")
 
         generator = rng if rng is not None else np.random.default_rng(seed)
-        return cls(d0=d0_arr, d1=d1_arr, p=p_arr, rng=generator)
+        names = _normalize_weapon_names(weapon_names, int(d0_arr.size))
+        return cls(d0=d0_arr, d1=d1_arr, p=p_arr, weapon_names=names, rng=generator)
 
     @classmethod
     def from_pack(
@@ -65,7 +79,7 @@ class WeaponDamageBandit:
         seed: int | None = None,
         rng: np.random.Generator | None = None,
     ) -> "WeaponDamageBandit":
-        return cls.from_params(pack.d0, pack.d1, pack.p, seed=seed, rng=rng)
+        return cls.from_params(pack.d0, pack.d1, pack.p, weapon_names=pack.weapon_names, seed=seed, rng=rng)
 
     @property
     def n_arms(self) -> int:
@@ -113,6 +127,99 @@ def _ensure_unique_best(values: NDArray[np.float64]) -> NDArray[np.float64]:
     return np.asarray(out, dtype=np.float64)
 
 
+_BASE_WEAPON_NAMES: tuple[str, ...] = (
+    "Sword",
+    "Spear",
+    "Axe",
+    "Bow",
+    "Dagger",
+    "Hammer",
+    "Halberd",
+    "Mace",
+    "Crossbow",
+    "Katana",
+    "Rapier",
+    "Scythe",
+    "Whip",
+    "Pike",
+    "Gauntlet",
+    "Lance",
+    "Morningstar",
+    "Claymore",
+    "Falchion",
+    "Trident",
+    "Glaive",
+    "Warpick",
+    "Saber",
+    "Estoc",
+    "Longbow",
+    "Shortbow",
+    "Flail",
+    "Greatsword",
+    "Battleaxe",
+    "Handaxe",
+    "Javelin",
+    "Twinblade",
+    "Naginata",
+    "Khopesh",
+    "Cutlass",
+    "Broadsword",
+    "Warhammer",
+    "Shotel",
+    "Billhook",
+    "Quarterstaff",
+    "Poleaxe",
+    "Dirk",
+    "Katar",
+    "Arbalest",
+    "Sling",
+    "Sai",
+    "Tonfa",
+    "Urumi",
+)
+
+
+def _normalize_weapon_names(
+    weapon_names: list[str] | tuple[str, ...] | None,
+    k: int,
+) -> tuple[str, ...]:
+    if weapon_names is None:
+        return tuple(f"Weapon-{i}" for i in range(k))
+
+    names = tuple(name.strip() for name in weapon_names)
+    if len(names) != k:
+        raise ValueError("weapon_names must have length K")
+    if any(name == "" for name in names):
+        raise ValueError("weapon_names must be non-empty strings")
+    if len(set(names)) != len(names):
+        raise ValueError("weapon_names must be unique")
+    return names
+
+
+def generate_weapon_names(k: int, rng: np.random.Generator) -> tuple[str, ...]:
+    if k <= 0:
+        raise ValueError("K must be positive")
+
+    pool = list(_BASE_WEAPON_NAMES)
+    seen_counts: dict[str, int] = {}
+    out: list[str] = []
+
+    while len(out) < k:
+        order = rng.permutation(len(pool))
+        for idx in order:
+            base = pool[int(idx)]
+            seen_counts[base] = seen_counts.get(base, 0) + 1
+            count = seen_counts[base]
+            if count == 1:
+                out.append(base)
+            else:
+                out.append(f"{base} Mk{count}")
+
+            if len(out) >= k:
+                break
+    return tuple(out)
+
+
 
 def generate_weapon_pack(spec: str, k: int, rng: np.random.Generator) -> WeaponPack:
     if k <= 0:
@@ -123,13 +230,19 @@ def generate_weapon_pack(spec: str, k: int, rng: np.random.Generator) -> WeaponP
         d1 = rng.uniform(90.0, 140.0, size=k)
         d1 = np.maximum(d1, d0 + 5.0)
         p = rng.uniform(0.05, 0.35, size=k)
+        weapon_names = generate_weapon_names(k, rng)
 
         expected = _ensure_unique_best(d0 * (1.0 - p) + d1 * p)
         best = int(np.argmax(expected))
         if best >= 0:
             # Tiny lift to keep unique best robustly after regeneration noise.
             d1[best] = d1[best] + 0.5
-        return WeaponPack(d0=d0.astype(np.float64), d1=d1.astype(np.float64), p=p.astype(np.float64))
+        return WeaponPack(
+            d0=d0.astype(np.float64),
+            d1=d1.astype(np.float64),
+            p=p.astype(np.float64),
+            weapon_names=weapon_names,
+        )
 
     if spec.startswith("topgap:"):
         try:
@@ -153,8 +266,14 @@ def generate_weapon_pack(spec: str, k: int, rng: np.random.Generator) -> WeaponP
         d1 = d0 + bonus
         d0 = np.clip(d0, 30.0, 150.0)
         d1 = np.maximum(d1, d0 + 1.0)
+        weapon_names = generate_weapon_names(k, rng)
 
-        return WeaponPack(d0=d0.astype(np.float64), d1=d1.astype(np.float64), p=p.astype(np.float64))
+        return WeaponPack(
+            d0=d0.astype(np.float64),
+            d1=d1.astype(np.float64),
+            p=p.astype(np.float64),
+            weapon_names=weapon_names,
+        )
 
     if spec == "archetypes":
         archetypes = rng.choice([0, 1, 2], size=k, p=np.asarray([0.40, 0.40, 0.20]))
@@ -187,7 +306,13 @@ def generate_weapon_pack(spec: str, k: int, rng: np.random.Generator) -> WeaponP
         expected = _ensure_unique_best(d0 * (1.0 - p) + d1 * p)
         best = int(np.argmax(expected))
         d1[best] = d1[best] + 0.5
+        weapon_names = generate_weapon_names(k, rng)
 
-        return WeaponPack(d0=d0.astype(np.float64), d1=d1.astype(np.float64), p=p.astype(np.float64))
+        return WeaponPack(
+            d0=d0.astype(np.float64),
+            d1=d1.astype(np.float64),
+            p=p.astype(np.float64),
+            weapon_names=weapon_names,
+        )
 
     raise ValueError(f"unknown weapon pack regime: {spec}")
