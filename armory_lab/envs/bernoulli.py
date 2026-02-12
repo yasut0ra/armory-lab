@@ -35,6 +35,18 @@ class BernoulliBandit:
     def best_arm(self) -> int:
         return int(np.argmax(self.means))
 
+    @property
+    def reward_min(self) -> float:
+        return 0.0
+
+    @property
+    def reward_max(self) -> float:
+        return 1.0
+
+    @property
+    def reward_range(self) -> float:
+        return 1.0
+
     def pull(self, arm: int) -> int:
         if arm < 0 or arm >= self.n_arms:
             raise IndexError(f"arm index {arm} out of range")
