@@ -6,6 +6,7 @@ import math
 import numpy as np
 
 from armory_lab.algos.base import HistoryRecord
+from armory_lab.envs.weapon_damage import ENEMY_NAMES, get_enemy_profile
 from armory_lab.plotting import plot_history
 from armory_lab.run import RunConfig, build_algo, build_problem
 
@@ -15,6 +16,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--env", default="weapon_damage", choices=["bernoulli", "weapon_damage"])
     parser.add_argument("--algo", default="lucb", choices=["lucb", "se", "tas", "ttts"])
     parser.add_argument("--objective", default="dps", choices=["dps", "oneshot"])
+    parser.add_argument("--enemy", default="none", choices=list(ENEMY_NAMES))
     parser.add_argument("--threshold", type=float, default=None)
     parser.add_argument("--K", type=int, default=10)
     parser.add_argument("--delta", type=float, default=0.05)
@@ -84,6 +86,7 @@ def main() -> None:
         algo=args.algo,
         env_name=args.env,
         objective=args.objective,
+        enemy=args.enemy,
         threshold=args.threshold,
         k=args.K,
         delta=args.delta,
@@ -109,6 +112,9 @@ def main() -> None:
         f"env={args.env} algo={args.algo} objective={args.objective} "
         f"delta={args.delta} seed={args.seed}"
     )
+    if args.env == "weapon_damage":
+        enemy = get_enemy_profile(args.enemy)
+        print(f"enemy={enemy.name} hp={enemy.hp:.0f} evasion={enemy.evasion:.2f}")
     if args.objective == "oneshot":
         print(f"threshold={args.threshold}")
 

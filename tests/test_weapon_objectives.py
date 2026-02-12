@@ -59,3 +59,28 @@ def test_weapon_damage_oneshot_smoke_stops() -> None:
     result = algo.run(obj_env, track_history=False)
     assert 0 <= result.recommend_arm < env.n_arms
     assert 0 < result.total_pulls <= 80_000
+
+
+def test_weapon_damage_enemy_type_can_flip_best() -> None:
+    env_slime = WeaponDamageBandit.from_params(
+        d0=np.asarray([50.0, 88.0], dtype=np.float64),
+        d1=np.asarray([260.0, 108.0], dtype=np.float64),
+        p=np.asarray([0.45, 0.10], dtype=np.float64),
+        accuracy=np.asarray([0.90, 0.95], dtype=np.float64),
+        enemy="slime",
+        seed=5,
+    )
+    env_golem = WeaponDamageBandit.from_params(
+        d0=np.asarray([50.0, 88.0], dtype=np.float64),
+        d1=np.asarray([260.0, 108.0], dtype=np.float64),
+        p=np.asarray([0.45, 0.10], dtype=np.float64),
+        accuracy=np.asarray([0.90, 0.95], dtype=np.float64),
+        enemy="golem",
+        seed=5,
+    )
+
+    best_slime = int(np.argmax(env_slime.expected_damages))
+    best_golem = int(np.argmax(env_golem.expected_damages))
+
+    assert best_slime == 1
+    assert best_golem == 0

@@ -29,3 +29,27 @@ def test_weapon_pack_names_reproducible_and_unique() -> None:
     assert len(pack_a.weapon_names) == 24
     assert len(set(pack_a.weapon_names)) == 24
     assert all(name.strip() for name in pack_a.weapon_names)
+
+
+def test_weapon_pack_enemy_profile_applied() -> None:
+    rng = np.random.default_rng(3)
+    pack = generate_weapon_pack(spec="random", k=10, rng=rng, enemy="ghost")
+
+    assert pack.enemy_name == "ghost"
+    assert pack.enemy_hp > 0.0
+    assert 0.0 <= pack.enemy_evasion < 1.0
+    assert pack.accuracy is not None
+    assert np.all((pack.accuracy > 0.0) & (pack.accuracy <= 1.0))
+
+
+def test_weapon_damage_pull_is_clipped_by_enemy_hp() -> None:
+    env = WeaponDamageBandit.from_params(
+        d0=np.asarray([120.0], dtype=np.float64),
+        d1=np.asarray([220.0], dtype=np.float64),
+        p=np.asarray([1.0 - 1e-6], dtype=np.float64),
+        accuracy=np.asarray([1.0], dtype=np.float64),
+        enemy="slime",
+        seed=1,
+    )
+    rewards = [env.pull(0) for _ in range(20)]
+    assert max(rewards) <= env.enemy_hp

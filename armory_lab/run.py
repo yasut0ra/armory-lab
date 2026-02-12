@@ -16,7 +16,7 @@ from armory_lab.algos.successive_elimination import SuccessiveElimination
 from armory_lab.algos.top_two_thompson_sampling import TopTwoThompsonSampling
 from armory_lab.algos.track_and_stop import TrackAndStop
 from armory_lab.envs.bernoulli import BernoulliBandit
-from armory_lab.envs.weapon_damage import WeaponDamageBandit, generate_weapon_pack
+from armory_lab.envs.weapon_damage import ENEMY_NAMES, WeaponDamageBandit, generate_weapon_pack
 from armory_lab.objective import ObjectiveBandit, bernoulli_objective_values, weapon_objective_values
 from armory_lab.plotting import plot_history
 
@@ -28,6 +28,7 @@ class RunConfig:
     delta: float = 0.05
     means_spec: str = "random"
     weapon_spec: str = "random"
+    enemy: str = "none"
     means_list: str | None = None
     env_name: str = "bernoulli"
     objective: str = "dps"
@@ -51,6 +52,11 @@ class ProblemInstance:
     d0: NDArray[np.float64] | None = None
     d1: NDArray[np.float64] | None = None
     p: NDArray[np.float64] | None = None
+    accuracy: NDArray[np.float64] | None = None
+    crit_multiplier: NDArray[np.float64] | None = None
+    enemy_name: str | None = None
+    enemy_hp: float | None = None
+    enemy_evasion: float | None = None
     weapon_names: tuple[str, ...] | None = None
 
 
@@ -64,6 +70,11 @@ class TrialRun:
     d0: NDArray[np.float64] | None = None
     d1: NDArray[np.float64] | None = None
     p: NDArray[np.float64] | None = None
+    accuracy: NDArray[np.float64] | None = None
+    crit_multiplier: NDArray[np.float64] | None = None
+    enemy_name: str | None = None
+    enemy_hp: float | None = None
+    enemy_evasion: float | None = None
     weapon_names: tuple[str, ...] | None = None
 
 
@@ -187,7 +198,7 @@ def build_problem(config: RunConfig, seed: int) -> ProblemInstance:
         if config.means_list is not None:
             raise ValueError("--means-list is only supported for env=bernoulli")
 
-        pack = generate_weapon_pack(config.weapon_spec, config.k, rng)
+        pack = generate_weapon_pack(config.weapon_spec, config.k, rng, enemy=config.enemy)
         weapon_env = WeaponDamageBandit.from_pack(pack, rng=rng)
         bandit = ObjectiveBandit(base_env=weapon_env, objective=config.objective, threshold=config.threshold)
         true_values = weapon_objective_values(weapon_env, config.objective, config.threshold)
@@ -198,6 +209,11 @@ def build_problem(config: RunConfig, seed: int) -> ProblemInstance:
             d0=weapon_env.d0.copy(),
             d1=weapon_env.d1.copy(),
             p=weapon_env.p.copy(),
+            accuracy=weapon_env.accuracy.copy(),
+            crit_multiplier=weapon_env.crit_multiplier.copy(),
+            enemy_name=weapon_env.enemy_name,
+            enemy_hp=weapon_env.enemy_hp,
+            enemy_evasion=weapon_env.enemy_evasion,
             weapon_names=weapon_env.weapon_names,
         )
 
@@ -239,6 +255,11 @@ def run_trials(config: RunConfig) -> list[TrialRun]:
                 d0=problem.d0,
                 d1=problem.d1,
                 p=problem.p,
+                accuracy=problem.accuracy,
+                crit_multiplier=problem.crit_multiplier,
+                enemy_name=problem.enemy_name,
+                enemy_hp=problem.enemy_hp,
+                enemy_evasion=problem.enemy_evasion,
                 weapon_names=problem.weapon_names,
             )
         )
@@ -280,6 +301,10 @@ def _trial_to_json_record(trial: TrialRun) -> dict[str, Any]:
             row["d0"] = float(trial.d0[arm])
             row["d1"] = float(trial.d1[arm])
             row["p"] = float(trial.p[arm])
+        if trial.accuracy is not None:
+            row["accuracy"] = float(trial.accuracy[arm])
+        if trial.crit_multiplier is not None:
+            row["crit_multiplier"] = float(trial.crit_multiplier[arm])
         arm_metadata.append(row)
 
     payload: dict[str, Any] = {
@@ -298,6 +323,16 @@ def _trial_to_json_record(trial: TrialRun) -> dict[str, Any]:
         payload["d0"] = [float(v) for v in trial.d0.tolist()]
         payload["d1"] = [float(v) for v in trial.d1.tolist()]
         payload["p"] = [float(v) for v in trial.p.tolist()]
+    if trial.accuracy is not None:
+        payload["accuracy"] = [float(v) for v in trial.accuracy.tolist()]
+    if trial.crit_multiplier is not None:
+        payload["crit_multiplier"] = [float(v) for v in trial.crit_multiplier.tolist()]
+    if trial.enemy_name is not None:
+        payload["enemy"] = {
+            "name": trial.enemy_name,
+            "hp": trial.enemy_hp,
+            "evasion": trial.enemy_evasion,
+        }
 
     return payload
 
@@ -322,6 +357,11 @@ def write_trials_csv(path: str, trials: Sequence[TrialRun]) -> None:
         "d0",
         "d1",
         "p",
+        "accuracy",
+        "crit_multiplier",
+        "enemy_name",
+        "enemy_hp",
+        "enemy_evasion",
         "weapon_name",
     ]
 
@@ -342,6 +382,13 @@ def write_trials_csv(path: str, trials: Sequence[TrialRun]) -> None:
                     "d0": "" if trial.d0 is None else json.dumps([round(float(v), 6) for v in trial.d0.tolist()]),
                     "d1": "" if trial.d1 is None else json.dumps([round(float(v), 6) for v in trial.d1.tolist()]),
                     "p": "" if trial.p is None else json.dumps([round(float(v), 6) for v in trial.p.tolist()]),
+                    "accuracy": "" if trial.accuracy is None else json.dumps([round(float(v), 6) for v in trial.accuracy.tolist()]),
+                    "crit_multiplier": ""
+                    if trial.crit_multiplier is None
+                    else json.dumps([round(float(v), 6) for v in trial.crit_multiplier.tolist()]),
+                    "enemy_name": "" if trial.enemy_name is None else trial.enemy_name,
+                    "enemy_hp": "" if trial.enemy_hp is None else round(float(trial.enemy_hp), 6),
+                    "enemy_evasion": "" if trial.enemy_evasion is None else round(float(trial.enemy_evasion), 6),
                     "weapon_name": "" if trial.weapon_names is None else json.dumps(list(trial.weapon_names)),
                 }
             )
@@ -363,6 +410,7 @@ def parse_args() -> RunConfig:
     parser.add_argument("--delta", type=float, default=0.05)
     parser.add_argument("--means", type=str, default="random")
     parser.add_argument("--pack", type=str, default="random")
+    parser.add_argument("--enemy", type=str, default="none", choices=list(ENEMY_NAMES))
     parser.add_argument("--means-list", type=str, default=None)
 
     parser.add_argument("--seed", type=int, default=0)
@@ -385,6 +433,7 @@ def parse_args() -> RunConfig:
         delta=args.delta,
         means_spec=args.means,
         weapon_spec=args.pack,
+        enemy=args.enemy,
         means_list=args.means_list,
         seed=args.seed,
         seed_step=args.seed_step,
@@ -419,6 +468,7 @@ def _print_single_trial(config: RunConfig, trial: TrialRun) -> None:
         print(f"threshold={config.threshold}")
     if config.env_name == "weapon_damage":
         print(f"weapon_pack={config.weapon_spec}")
+        print(f"enemy={config.enemy}")
     elif config.means_list is not None:
         print(f"means_list={config.means_list}")
     else:
@@ -440,6 +490,7 @@ def _print_multi_trial(config: RunConfig, trials: Sequence[TrialRun], summary: T
         print(f"threshold={config.threshold}")
     if config.env_name == "weapon_damage":
         print(f"weapon_pack={config.weapon_spec}")
+        print(f"enemy={config.enemy}")
     elif config.means_list is not None:
         print(f"means_list={config.means_list}")
     else:
@@ -468,6 +519,7 @@ def _print_json_payload(config: RunConfig, trials: Sequence[TrialRun], summary: 
         "seed_step": config.seed_step,
         "means_regime": config.means_spec,
         "weapon_pack": config.weapon_spec,
+        "enemy": config.enemy,
         "means_list": config.means_list,
         "max_pulls": config.max_pulls,
         "results": [_trial_to_json_record(trial) for trial in trials],

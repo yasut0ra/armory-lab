@@ -48,6 +48,7 @@ DEFAULT_FORM: dict[str, str] = {
     "env": "bernoulli",
     "algo": "lucb",
     "objective": "dps",
+    "enemy": "none",
     "threshold": "",
     "k": "20",
     "delta": "0.05",
@@ -315,6 +316,16 @@ HTML_TEMPLATE = """
         </div>
 
         <div>
+          <label for="enemy">enemy (weapon_damage)</label>
+          <select id="enemy" name="enemy">
+            <option value="none" {% if form.enemy == "none" %}selected{% endif %}>none</option>
+            <option value="slime" {% if form.enemy == "slime" %}selected{% endif %}>slime (HP低)</option>
+            <option value="golem" {% if form.enemy == "golem" %}selected{% endif %}>golem (HP高)</option>
+            <option value="ghost" {% if form.enemy == "ghost" %}selected{% endif %}>ghost (高回避)</option>
+          </select>
+        </div>
+
+        <div>
           <label for="threshold">threshold (oneshot時に必須)</label>
           <input id="threshold" name="threshold" type="number" step="0.1" value="{{ form.threshold }}" />
         </div>
@@ -384,7 +395,7 @@ HTML_TEMPLATE = """
               <h3>実行サマリ</h3>
               <div class="mono">
                 env={{ out.config["env"] }} / objective={{ out.config["objective"] }} / threshold={{ out.config["threshold"] if out.config["threshold"] else "-" }}<br>
-                algo={{ out.config["algo"] }} / K={{ out.config["k"] }} / delta={{ out.config["delta"] }} / seed={{ out.config["seed"] }}
+                algo={{ out.config["algo"] }} / enemy={{ out.config["enemy"] }}(hp={{ out.config.get("enemy_hp", "-") }}, evasion={{ out.config.get("enemy_evasion", "-") }}) / K={{ out.config["k"] }} / delta={{ out.config["delta"] }} / seed={{ out.config["seed"] }}
               </div>
               <div style="margin-top:6px;"><b>停止理由:</b> {{ out.stop_reason }}</div>
             </section>
@@ -404,8 +415,8 @@ HTML_TEMPLATE = """
           </div>
           {% if out.config["env"] == "weapon_damage" %}
             <div style="font-size:.82rem;color:#6a655e;margin-bottom:8px;line-height:1.45;">
-              weapon_damage の列定義: d0=通常ダメージ, d1=クリティカルダメージ, crit p=クリティカル確率。<br>
-              1回の攻撃は確率 (1-p) で d0、確率 p で d1。E[dmg] = d0*(1-p) + d1*p
+              列定義: base=d0(通常ダメージ), crit dmg=d1, crit%=クリ率, acc%=命中率, crit x=クリ倍率。<br>
+              enemy={{ out.config["enemy"] }}。1回の攻撃は miss / normal / crit の3状態で、enemy回避は命中率に反映されます。
             </div>
           {% endif %}
           <div class="table-wrap">
@@ -521,7 +532,7 @@ def _build_allocation_plot(pulls_per_arm: list[int]) -> str:
     return _fig_to_base64(fig)
 
 
-def _parse_and_validate(form: dict[str, str]) -> tuple[str, str, str, float | None, int, float, str, str, int, int]:
+def _parse_and_validate(form: dict[str, str]) -> tuple[str, str, str, str, float | None, int, float, str, str, int, int]:
     env_name = form["env"].strip().lower()
     if env_name not in {"bernoulli", "weapon_damage"}:
         raise ValueError("env は bernoulli か weapon_damage を指定してください")
@@ -533,6 +544,10 @@ def _parse_and_validate(form: dict[str, str]) -> tuple[str, str, str, float | No
     objective = form["objective"].strip().lower()
     if objective not in {"dps", "oneshot"}:
         raise ValueError("objective は dps / oneshot を指定してください")
+
+    enemy = form["enemy"].strip().lower()
+    if enemy not in {"none", "slime", "golem", "ghost"}:
+        raise ValueError("enemy は none / slime / golem / ghost を指定してください")
 
     threshold: float | None = None
     threshold_raw = form["threshold"].strip()
@@ -583,7 +598,7 @@ def _parse_and_validate(form: dict[str, str]) -> tuple[str, str, str, float | No
     if max_pulls < 1000 or max_pulls > 1_000_000:
         raise ValueError("max_pulls は 1000 以上 1000000 以下で指定してください")
 
-    return env_name, algo, objective, threshold, k, delta, means_spec, weapon_spec, seed, max_pulls
+    return env_name, algo, objective, enemy, threshold, k, delta, means_spec, weapon_spec, seed, max_pulls
 
 
 def _to_round_preview(history: list[HistoryRecord], take_last: int = 12) -> list[RoundPreview]:
@@ -621,6 +636,9 @@ def _build_status_table(
     d0: np.ndarray | None,
     d1: np.ndarray | None,
     p: np.ndarray | None,
+    accuracy: np.ndarray | None,
+    enemy_hp: float | None,
+    enemy_evasion: float | None,
     weapon_names: tuple[str, ...] | None,
     est_counts: np.ndarray,
     est_means: np.ndarray,
@@ -646,17 +664,25 @@ def _build_status_table(
         return weapon_names[arm]
 
     if env_name == "weapon_damage" and d0 is not None and d1 is not None and p is not None:
-        expected = d0 * (1.0 - p) + d1 * p
+        acc = np.ones_like(d0, dtype=np.float64) if accuracy is None else accuracy
+        hp = float(np.max(d1)) if enemy_hp is None else float(enemy_hp)
+        evasion = 0.0 if enemy_evasion is None else float(enemy_evasion)
+        hit_prob = np.clip(acc * (1.0 - evasion), 0.0, 1.0)
+        d0_eff = np.minimum(d0, hp)
+        d1_eff = np.minimum(d1, hp)
+        crit_x = d1 / np.maximum(d0, 1e-9)
+        expected = hit_prob * (d0_eff * (1.0 - p) + d1_eff * p)
         oneshot_vals: np.ndarray | None = None
         if threshold is not None:
-            hit_d0 = (d0 >= threshold).astype(np.float64)
-            hit_d1 = (d1 >= threshold).astype(np.float64)
-            oneshot_vals = p * hit_d1 + (1.0 - p) * hit_d0
+            hit_d0 = (d0_eff >= threshold).astype(np.float64)
+            hit_d1 = (d1_eff >= threshold).astype(np.float64)
+            miss_hit = 1.0 if threshold <= 0.0 else 0.0
+            oneshot_vals = (1.0 - hit_prob) * miss_hit + hit_prob * (p * hit_d1 + (1.0 - p) * hit_d0)
 
         if objective == "oneshot":
-            headers = ["Weapon", "rank", "mark", "arm", "pulls", "est hit", "CI", "true hit", "d0", "d1", "crit p", "E[dmg]"]
+            headers = ["Weapon", "rank", "mark", "arm", "pulls", "est hit", "CI", "true hit", "base", "crit dmg", "acc%", "crit%", "crit x", "E[dmg]"]
         else:
-            headers = ["Weapon", "rank", "mark", "arm", "pulls", "est obj", "CI", "true obj", "d0", "d1", "crit p"]
+            headers = ["Weapon", "rank", "mark", "arm", "pulls", "est obj", "CI", "true obj", "base", "crit dmg", "acc%", "crit%", "crit x"]
         rows: list[list[str]] = []
         for rank_idx, arm_idx in enumerate(order, start=1):
             arm = int(arm_idx)
@@ -678,7 +704,9 @@ def _build_status_table(
                         true_text,
                         f"{float(d0[arm]):.2f}",
                         f"{float(d1[arm]):.2f}",
+                        f"{100.0 * float(acc[arm]):.2f}%",
                         f"{100.0 * float(p[arm]):.2f}%",
+                        f"{float(crit_x[arm]):.2f}x",
                         f"{float(expected[arm]):.4f}",
                     ]
                 )
@@ -698,7 +726,9 @@ def _build_status_table(
                         true_text,
                         f"{float(d0[arm]):.2f}",
                         f"{float(d1[arm]):.2f}",
+                        f"{100.0 * float(acc[arm]):.2f}%",
                         f"{100.0 * float(p[arm]):.2f}%",
+                        f"{float(crit_x[arm]):.2f}x",
                     ]
                 )
         return headers, rows
@@ -727,12 +757,13 @@ def _build_status_table(
 
 
 def _run_experiment(form: dict[str, str]) -> WebRunResult:
-    env_name, algo, objective, threshold, k, delta, means_spec, weapon_spec, seed, max_pulls = _parse_and_validate(form)
+    env_name, algo, objective, enemy, threshold, k, delta, means_spec, weapon_spec, seed, max_pulls = _parse_and_validate(form)
 
     config = RunConfig(
         algo=algo,
         env_name=env_name,
         objective=objective,
+        enemy=enemy,
         threshold=threshold,
         k=k,
         delta=delta,
@@ -780,6 +811,9 @@ def _run_experiment(form: dict[str, str]) -> WebRunResult:
         d0=problem.d0,
         d1=problem.d1,
         p=problem.p,
+        accuracy=problem.accuracy,
+        enemy_hp=problem.enemy_hp,
+        enemy_evasion=problem.enemy_evasion,
         weapon_names=problem.weapon_names,
         est_counts=final_state.counts,
         est_means=final_state.means,
@@ -787,8 +821,16 @@ def _run_experiment(form: dict[str, str]) -> WebRunResult:
         est_ucbs=final_state.ucbs,
     )
 
+    rendered_config = form.copy()
+    if problem.enemy_name is not None:
+        rendered_config["enemy"] = problem.enemy_name
+    if problem.enemy_hp is not None:
+        rendered_config["enemy_hp"] = f"{float(problem.enemy_hp):.1f}"
+    if problem.enemy_evasion is not None:
+        rendered_config["enemy_evasion"] = f"{float(problem.enemy_evasion):.2f}"
+
     return WebRunResult(
-        config=form.copy(),
+        config=rendered_config,
         recommend_arm=result.recommend_arm,
         true_best=true_best,
         total_pulls=result.total_pulls,

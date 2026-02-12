@@ -119,3 +119,6 @@ def test_trial_json_has_arm_metadata_with_weapon_names() -> None:
     assert "d0" in first
     assert "d1" in first
     assert "p" in first
+    assert "accuracy" in first
+    assert "crit_multiplier" in first
+    assert "enemy" in record

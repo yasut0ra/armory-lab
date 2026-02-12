@@ -5,6 +5,7 @@ import csv
 import json
 from pathlib import Path
 
+from armory_lab.envs.weapon_damage import ENEMY_NAMES
 from armory_lab.run import RunConfig, run_trials, summarize_trial_runs
 
 
@@ -32,6 +33,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--means-regime", type=str, default="topgap")
     parser.add_argument("--pack-regime", type=str, default="topgap")
+    parser.add_argument("--enemy", type=str, default="none", choices=list(ENEMY_NAMES))
 
     parser.add_argument("--trials", type=int, default=50)
     parser.add_argument("--seed", type=int, default=0)
@@ -69,6 +71,7 @@ def main() -> None:
         "threshold",
         "means_regime",
         "pack_regime",
+        "enemy",
         "trials",
         "mean_total_pulls",
         "misidentification_rate",
@@ -96,6 +99,7 @@ def main() -> None:
                             delta=delta,
                             means_spec=args.means_regime,
                             weapon_spec=args.pack_regime,
+                            enemy=args.enemy,
                             seed=trial_seed,
                             trials=args.trials,
                             seed_step=1,
@@ -115,6 +119,7 @@ def main() -> None:
                                 "threshold": threshold,
                                 "means_regime": args.means_regime,
                                 "pack_regime": args.pack_regime,
+                                "enemy": args.enemy,
                                 "trials": args.trials,
                                 "mean_total_pulls": f"{summary.mean_total_pulls:.3f}",
                                 "misidentification_rate": f"{summary.misidentification_rate:.4f}",
@@ -128,6 +133,7 @@ def main() -> None:
                             "finished "
                             f"env={args.env} objective=oneshot algo={args.algo} K={k} "
                             f"delta={delta} threshold={threshold} "
+                            f"enemy={args.enemy} "
                             f"mean_T={summary.mean_total_pulls:.1f} err={summary.misidentification_rate:.3f}"
                         )
                 else:
@@ -147,6 +153,7 @@ def main() -> None:
                             delta=delta,
                             means_spec=means_regime,
                             weapon_spec=pack_regime,
+                            enemy=args.enemy,
                             seed=trial_seed,
                             trials=args.trials,
                             seed_step=1,
@@ -166,6 +173,7 @@ def main() -> None:
                                 "threshold": "",
                                 "means_regime": means_regime,
                                 "pack_regime": pack_regime,
+                                "enemy": args.enemy,
                                 "trials": args.trials,
                                 "mean_total_pulls": f"{summary.mean_total_pulls:.3f}",
                                 "misidentification_rate": f"{summary.misidentification_rate:.4f}",
@@ -177,7 +185,7 @@ def main() -> None:
 
                         print(
                             "finished "
-                            f"env={args.env} objective=dps algo={args.algo} K={k} delta={delta} gap={gap} "
+                            f"env={args.env} objective=dps algo={args.algo} K={k} delta={delta} gap={gap} enemy={args.enemy} "
                             f"mean_T={summary.mean_total_pulls:.1f} err={summary.misidentification_rate:.3f}"
                         )
 

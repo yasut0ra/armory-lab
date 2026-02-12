@@ -7,7 +7,10 @@
 
 - 環境
   - `bernoulli`: 各腕の報酬が Bernoulli
-  - `weapon_damage`: 各腕が 2点混合ダメージ分布（通常ダメージ `d0` / クリダメ `d1` / クリ確率 `p`）
+  - `weapon_damage`: RPG風武器ステータス + 敵タイプ
+    - 武器: `base_attack(d0)` / `crit_rate(p)` / `crit_multiplier` / `accuracy`
+    - 敵: `slime` / `golem` / `ghost`（`HP` と `evasion` を持つ）
+    - 1回の攻撃は `miss / normal / crit` の3状態
 - objective（最強の定義）
   - `dps`: 期待ダメージ最大（`E[damage]` 最大）
   - `oneshot`: `P(damage >= threshold)` 最大
@@ -37,8 +40,8 @@ python -m armory_lab.web --host 127.0.0.1 --port 7860
 ```
 
 - アクセス: `http://127.0.0.1:7860`
-- `env` / `objective` / `threshold` / `algo` を切り替えて実行
-- ステータス表は `Weapon` 列（武器名）を常時表示。`weapon_damage` では `d0/d1/crit p` と合わせて比較可能
+- `env` / `objective` / `enemy` / `threshold` / `algo` を切り替えて実行
+- ステータス表は `Weapon` 列（武器名）を常時表示。`weapon_damage` では `base/acc/crit%/crit x` を比較可能
 
 ## CLI
 
@@ -55,6 +58,7 @@ python -m armory_lab.run \
   --env weapon_damage \
   --algo lucb \
   --objective dps \
+  --enemy golem \
   --pack random \
   --K 12 \
   --delta 0.05 \
@@ -69,6 +73,7 @@ python -m armory_lab.run \
   --env weapon_damage \
   --algo lucb \
   --objective oneshot \
+  --enemy ghost \
   --threshold 100 \
   --pack archetypes \
   --K 12 \
@@ -84,7 +89,8 @@ python -m armory_lab.run \
 - `--output-csv`: 試行ごとの結果CSV
 - `--json`: JSON出力
 - `--means-list`: bernoulliの腕平均を直接指定
-- `--json` には `arm_metadata`（`arm`, `weapon_name`, `d0`, `d1`, `p`, `objective_value`）を含む
+- `--enemy`: `none/slime/golem/ghost`（`weapon_damage` 向け）
+- `--json` には `arm_metadata`（`arm`, `weapon_name`, `d0`, `d1`, `p`, `accuracy`, `crit_multiplier`, `objective_value`）を含む
 - `--output-csv` には `weapon_name` 列（`weapon_damage`時は武器名配列）を含む
 
 ## レジーム
@@ -104,11 +110,17 @@ python -m armory_lab.run \
 - `archetypes`
   - 安定型 / クリ型 / ギャンブル型を混合
 
+### enemy (`--enemy`)
+
+- `slime`: HP低め。過剰ダメージが切り捨てられ、安定型が強くなりやすい
+- `golem`: HP高め。高期待値・高打点武器が通りやすい
+- `ghost`: 回避高め。命中率の価値が上がる
+
 ## 武器鑑定デモ
 
 ```bash
-python demo/weapon_appraisal.py --env weapon_damage --algo lucb --objective dps --pack archetypes --seed 0
-python demo/weapon_appraisal.py --env weapon_damage --algo lucb --objective oneshot --threshold 100 --pack archetypes --seed 0
+python demo/weapon_appraisal.py --env weapon_damage --algo lucb --objective dps --enemy golem --pack archetypes --seed 0
+python demo/weapon_appraisal.py --env weapon_damage --algo lucb --objective oneshot --enemy ghost --threshold 100 --pack archetypes --seed 0
 ```
 
 - LUCB時は leader vs challenger をラウンド表示
@@ -123,6 +135,7 @@ python experiments/sweep.py \
   --env weapon_damage \
   --objective dps \
   --algo lucb \
+  --enemy golem \
   --K-values 10,20 \
   --deltas 0.05,0.1 \
   --gaps 4,8,12 \
@@ -138,6 +151,7 @@ python experiments/sweep.py \
   --env weapon_damage \
   --objective oneshot \
   --algo lucb \
+  --enemy ghost \
   --K-values 10,20 \
   --deltas 0.05,0.1 \
   --thresholds 90,100,110 \
@@ -146,7 +160,7 @@ python experiments/sweep.py \
   --output experiments/sweep_weapon_oneshot.csv
 ```
 
-CSVには `env/objective/threshold` を含みます。
+CSVには `env/objective/enemy/threshold` を含みます。
 
 ## 実装メモ
 
