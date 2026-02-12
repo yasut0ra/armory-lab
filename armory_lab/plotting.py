@@ -15,6 +15,7 @@ def plot_history(
     true_means: NDArray[np.float64] | None = None,
     arm_labels: Sequence[str] | None = None,
     title: str | None = None,
+    metric_label: str = "mean",
     save_path: str | None = None,
     show: bool = True,
 ) -> None:
@@ -49,7 +50,7 @@ def plot_history(
 
     stop_x = float(x[-1])
     ax_ci.axvline(stop_x, color="red", linestyle="--", linewidth=1.2)
-    ax_ci.set_ylabel("mean and CI")
+    ax_ci.set_ylabel(f"{metric_label} and CI")
     ax_ci.set_ylim(-0.02, 1.02)
     ax_ci.set_title("Confidence Interval Trajectories")
     if n_arms <= 12:
