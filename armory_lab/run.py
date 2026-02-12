@@ -15,25 +15,41 @@ from armory_lab.algos.lucb import LUCB
 from armory_lab.algos.successive_elimination import SuccessiveElimination
 from armory_lab.algos.track_and_stop import TrackAndStop
 from armory_lab.envs.bernoulli import BernoulliBandit
+from armory_lab.envs.weapon_damage import WeaponDamageBandit, generate_weapon_pack
+from armory_lab.objective import ObjectiveBandit, bernoulli_objective_values, weapon_objective_values
 from armory_lab.plotting import plot_history
 
 
 @dataclass(slots=True)
 class RunConfig:
-    algo: str
-    k: int
-    delta: float
-    means_spec: str
-    means_list: str | None
-    seed: int
-    seed_step: int
-    trials: int
-    max_pulls: int
-    plot: bool
-    save_plot: str | None
-    no_show: bool
-    output_csv: str | None
-    output_json: bool
+    algo: str = "lucb"
+    k: int = 20
+    delta: float = 0.05
+    means_spec: str = "random"
+    weapon_spec: str = "random"
+    means_list: str | None = None
+    env_name: str = "bernoulli"
+    objective: str = "dps"
+    threshold: float | None = None
+    seed: int = 0
+    seed_step: int = 1
+    trials: int = 1
+    max_pulls: int = 200_000
+    plot: bool = False
+    save_plot: str | None = None
+    no_show: bool = False
+    output_csv: str | None = None
+    output_json: bool = False
+
+
+@dataclass(slots=True)
+class ProblemInstance:
+    bandit: ObjectiveBandit
+    true_values: NDArray[np.float64]
+    true_best: int
+    d0: NDArray[np.float64] | None = None
+    d1: NDArray[np.float64] | None = None
+    p: NDArray[np.float64] | None = None
 
 
 @dataclass(slots=True)
@@ -43,6 +59,9 @@ class TrialRun:
     result: BAIResult
     means: NDArray[np.float64]
     true_best: int
+    d0: NDArray[np.float64] | None = None
+    d1: NDArray[np.float64] | None = None
+    p: NDArray[np.float64] | None = None
 
 
 @dataclass(slots=True)
@@ -52,6 +71,7 @@ class TrialSummary:
     std_total_pulls: float
     misidentification_rate: float
     mean_pulls_per_arm: NDArray[np.float64]
+
 
 
 def _ensure_unique_best(means: NDArray[np.float64]) -> NDArray[np.float64]:
@@ -65,6 +85,7 @@ def _ensure_unique_best(means: NDArray[np.float64]) -> NDArray[np.float64]:
     if tied.size > 1:
         adjusted[best] = min(1.0, adjusted[best] + 1e-4)
     return np.asarray(adjusted, dtype=np.float64)
+
 
 
 def parse_means_list(raw: str) -> NDArray[np.float64]:
@@ -83,6 +104,7 @@ def parse_means_list(raw: str) -> NDArray[np.float64]:
     if np.any((means < 0.0) | (means > 1.0)):
         raise ValueError("means-list values must be in [0, 1]")
     return _ensure_unique_best(means)
+
 
 
 def generate_means(spec: str, k: int, rng: np.random.Generator) -> NDArray[np.float64]:
@@ -120,6 +142,7 @@ def generate_means(spec: str, k: int, rng: np.random.Generator) -> NDArray[np.fl
     raise ValueError(f"unknown means regime: {spec}")
 
 
+
 def build_algo(name: str, delta: float, max_pulls: int) -> LUCB | SuccessiveElimination | TrackAndStop:
     normalized = name.lower()
     if normalized == "lucb":
@@ -131,10 +154,49 @@ def build_algo(name: str, delta: float, max_pulls: int) -> LUCB | SuccessiveElim
     raise ValueError(f"unknown algorithm: {name}")
 
 
-def _resolve_means(config: RunConfig, rng: np.random.Generator) -> NDArray[np.float64]:
-    if config.means_list is not None:
-        return parse_means_list(config.means_list)
-    return generate_means(config.means_spec, config.k, rng)
+
+def _validate_objective(config: RunConfig) -> None:
+    if config.objective not in {"dps", "oneshot"}:
+        raise ValueError("objective must be dps or oneshot")
+    if config.objective == "oneshot" and config.threshold is None:
+        raise ValueError("--threshold is required when --objective oneshot")
+
+
+
+def build_problem(config: RunConfig, seed: int) -> ProblemInstance:
+    _validate_objective(config)
+    rng = np.random.default_rng(seed)
+
+    if config.env_name == "bernoulli":
+        means = parse_means_list(config.means_list) if config.means_list is not None else generate_means(config.means_spec, config.k, rng)
+        base_env = BernoulliBandit.from_means(means, rng=rng)
+        bandit = ObjectiveBandit(base_env=base_env, objective=config.objective, threshold=config.threshold)
+        true_values = bernoulli_objective_values(means, config.objective, config.threshold)
+        return ProblemInstance(
+            bandit=bandit,
+            true_values=true_values,
+            true_best=int(np.argmax(true_values)),
+        )
+
+    if config.env_name == "weapon_damage":
+        if config.means_list is not None:
+            raise ValueError("--means-list is only supported for env=bernoulli")
+
+        pack = generate_weapon_pack(config.weapon_spec, config.k, rng)
+        weapon_env = WeaponDamageBandit.from_pack(pack, rng=rng)
+        bandit = ObjectiveBandit(base_env=weapon_env, objective=config.objective, threshold=config.threshold)
+        true_values = weapon_objective_values(weapon_env, config.objective, config.threshold)
+        return ProblemInstance(
+            bandit=bandit,
+            true_values=true_values,
+            true_best=int(np.argmax(true_values)),
+            d0=weapon_env.d0.copy(),
+            d1=weapon_env.d1.copy(),
+            p=weapon_env.p.copy(),
+        )
+
+    raise ValueError(f"unknown env: {config.env_name}")
+
 
 
 def run_once(
@@ -143,14 +205,11 @@ def run_once(
     track_history: bool = True,
 ) -> tuple[BAIResult, NDArray[np.float64], int]:
     seed = config.seed if seed_override is None else seed_override
-    rng = np.random.default_rng(seed)
-    means = _resolve_means(config, rng)
-    env = BernoulliBandit.from_means(means, rng=rng)
+    problem = build_problem(config, seed)
     algo = build_algo(config.algo, config.delta, config.max_pulls)
+    result = algo.run(problem.bandit, track_history=track_history)
+    return result, problem.true_values, problem.true_best
 
-    result = algo.run(env, track_history=track_history)
-    true_best = int(np.argmax(means))
-    return result, means, true_best
 
 
 def run_trials(config: RunConfig) -> list[TrialRun]:
@@ -160,18 +219,24 @@ def run_trials(config: RunConfig) -> list[TrialRun]:
     trials: list[TrialRun] = []
     for trial_id in range(config.trials):
         seed = config.seed + trial_id * config.seed_step
+        problem = build_problem(config, seed)
+        algo = build_algo(config.algo, config.delta, config.max_pulls)
         track_history = bool(config.plot and trial_id == 0)
-        result, means, true_best = run_once(config, seed_override=seed, track_history=track_history)
+        result = algo.run(problem.bandit, track_history=track_history)
         trials.append(
             TrialRun(
                 trial_id=trial_id,
                 seed=seed,
                 result=result,
-                means=means,
-                true_best=true_best,
+                means=problem.true_values,
+                true_best=problem.true_best,
+                d0=problem.d0,
+                d1=problem.d1,
+                p=problem.p,
             )
         )
     return trials
+
 
 
 def summarize_trial_runs(trials: Sequence[TrialRun]) -> TrialSummary:
@@ -194,8 +259,9 @@ def summarize_trial_runs(trials: Sequence[TrialRun]) -> TrialSummary:
     )
 
 
+
 def _trial_to_json_record(trial: TrialRun) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "trial_id": trial.trial_id,
         "seed": trial.seed,
         "recommend_arm": trial.result.recommend_arm,
@@ -203,8 +269,16 @@ def _trial_to_json_record(trial: TrialRun) -> dict[str, Any]:
         "correct": bool(trial.result.recommend_arm == trial.true_best),
         "total_pulls": trial.result.total_pulls,
         "pulls_per_arm": trial.result.pulls_per_arm.tolist(),
-        "means": [float(v) for v in trial.means.tolist()],
+        "objective_values": [float(v) for v in trial.means.tolist()],
     }
+
+    if trial.d0 is not None and trial.d1 is not None and trial.p is not None:
+        payload["d0"] = [float(v) for v in trial.d0.tolist()]
+        payload["d1"] = [float(v) for v in trial.d1.tolist()]
+        payload["p"] = [float(v) for v in trial.p.tolist()]
+
+    return payload
+
 
 
 def write_trials_csv(path: str, trials: Sequence[TrialRun]) -> None:
@@ -222,7 +296,10 @@ def write_trials_csv(path: str, trials: Sequence[TrialRun]) -> None:
         "correct",
         "total_pulls",
         "pulls_per_arm",
-        "means",
+        "objective_values",
+        "d0",
+        "d1",
+        "p",
     ]
 
     with output_path.open("w", newline="", encoding="utf-8") as f:
@@ -238,9 +315,13 @@ def write_trials_csv(path: str, trials: Sequence[TrialRun]) -> None:
                     "correct": int(trial.result.recommend_arm == trial.true_best),
                     "total_pulls": trial.result.total_pulls,
                     "pulls_per_arm": json.dumps(trial.result.pulls_per_arm.tolist()),
-                    "means": json.dumps([round(float(v), 6) for v in trial.means.tolist()]),
+                    "objective_values": json.dumps([round(float(v), 6) for v in trial.means.tolist()]),
+                    "d0": "" if trial.d0 is None else json.dumps([round(float(v), 6) for v in trial.d0.tolist()]),
+                    "d1": "" if trial.d1 is None else json.dumps([round(float(v), 6) for v in trial.d1.tolist()]),
+                    "p": "" if trial.p is None else json.dumps([round(float(v), 6) for v in trial.p.tolist()]),
                 }
             )
+
 
 
 def parse_args() -> RunConfig:
@@ -250,10 +331,16 @@ def parse_args() -> RunConfig:
         default="lucb",
         choices=["lucb", "se", "successive_elimination", "tas", "track_and_stop"],
     )
+    parser.add_argument("--env", default="bernoulli", choices=["bernoulli", "weapon_damage"])
+    parser.add_argument("--objective", default="dps", choices=["dps", "oneshot"])
+    parser.add_argument("--threshold", type=float, default=None)
+
     parser.add_argument("--K", type=int, default=20)
     parser.add_argument("--delta", type=float, default=0.05)
     parser.add_argument("--means", type=str, default="random")
+    parser.add_argument("--pack", type=str, default="random")
     parser.add_argument("--means-list", type=str, default=None)
+
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--seed-step", type=int, default=1)
     parser.add_argument("--trials", type=int, default=1)
@@ -267,9 +354,13 @@ def parse_args() -> RunConfig:
 
     return RunConfig(
         algo=args.algo,
+        env_name=args.env,
+        objective=args.objective,
+        threshold=args.threshold,
         k=args.K,
         delta=args.delta,
         means_spec=args.means,
+        weapon_spec=args.pack,
         means_list=args.means_list,
         seed=args.seed,
         seed_step=args.seed_step,
@@ -283,26 +374,53 @@ def parse_args() -> RunConfig:
     )
 
 
+
+def _metric_label(config: RunConfig) -> str:
+    if config.objective == "oneshot":
+        return "hit-rate"
+    if config.env_name == "weapon_damage":
+        return "expected damage"
+    return "mean reward"
+
+
+
 def _print_single_trial(config: RunConfig, trial: TrialRun) -> None:
     is_correct = trial.result.recommend_arm == trial.true_best
     k = int(trial.means.size)
-    print(f"algo={config.algo} K={k} delta={config.delta} seed={trial.seed}")
-    if config.means_list is not None:
+    print(
+        f"env={config.env_name} objective={config.objective} "
+        f"algo={config.algo} K={k} delta={config.delta} seed={trial.seed}"
+    )
+    if config.objective == "oneshot":
+        print(f"threshold={config.threshold}")
+    if config.env_name == "weapon_damage":
+        print(f"weapon_pack={config.weapon_spec}")
+    elif config.means_list is not None:
         print(f"means_list={config.means_list}")
     else:
         print(f"means_regime={config.means_spec}")
+
     print(f"recommended_arm={trial.result.recommend_arm} true_best={trial.true_best} correct={is_correct}")
     print(f"total_pulls={trial.result.total_pulls}")
     print(f"pulls_per_arm={trial.result.pulls_per_arm.tolist()}")
 
 
+
 def _print_multi_trial(config: RunConfig, trials: Sequence[TrialRun], summary: TrialSummary) -> None:
     k = int(trials[0].means.size)
-    print(f"algo={config.algo} K={k} delta={config.delta} trials={summary.n_trials}")
-    if config.means_list is not None:
+    print(
+        f"env={config.env_name} objective={config.objective} algo={config.algo} "
+        f"K={k} delta={config.delta} trials={summary.n_trials}"
+    )
+    if config.objective == "oneshot":
+        print(f"threshold={config.threshold}")
+    if config.env_name == "weapon_damage":
+        print(f"weapon_pack={config.weapon_spec}")
+    elif config.means_list is not None:
         print(f"means_list={config.means_list}")
     else:
         print(f"means_regime={config.means_spec}")
+
     print(f"seed_start={config.seed} seed_step={config.seed_step}")
     print(
         "summary "
@@ -313,14 +431,19 @@ def _print_multi_trial(config: RunConfig, trials: Sequence[TrialRun], summary: T
     print(f"mean_pulls_per_arm={[round(float(x), 3) for x in summary.mean_pulls_per_arm.tolist()]}")
 
 
+
 def _print_json_payload(config: RunConfig, trials: Sequence[TrialRun], summary: TrialSummary | None) -> None:
     payload: dict[str, Any] = {
+        "env": config.env_name,
+        "objective": config.objective,
+        "threshold": config.threshold,
         "algo": config.algo,
         "delta": config.delta,
         "trials": config.trials,
         "seed": config.seed,
         "seed_step": config.seed_step,
         "means_regime": config.means_spec,
+        "weapon_pack": config.weapon_spec,
         "means_list": config.means_list,
         "max_pulls": config.max_pulls,
         "results": [_trial_to_json_record(trial) for trial in trials],
@@ -336,6 +459,7 @@ def _print_json_payload(config: RunConfig, trials: Sequence[TrialRun], summary: 
         }
 
     print(json.dumps(payload, ensure_ascii=False))
+
 
 
 def main() -> None:
@@ -357,7 +481,11 @@ def main() -> None:
                 history=first.result.history,
                 pulls_per_arm=first.result.pulls_per_arm,
                 true_means=first.means,
-                title=f"{config.algo.upper()} | K={int(first.means.size)} delta={config.delta}",
+                title=(
+                    f"{config.algo.upper()} | env={config.env_name} "
+                    f"objective={config.objective} K={int(first.means.size)} delta={config.delta}"
+                ),
+                metric_label=_metric_label(config),
                 save_path=config.save_plot,
                 show=not config.no_show,
             )
@@ -381,9 +509,10 @@ def main() -> None:
             pulls_per_arm=first.result.pulls_per_arm,
             true_means=first.means,
             title=(
-                f"{config.algo.upper()} | trial=0 | K={int(first.means.size)} "
-                f"delta={config.delta}"
+                f"{config.algo.upper()} | trial=0 | env={config.env_name} "
+                f"objective={config.objective} K={int(first.means.size)} delta={config.delta}"
             ),
+            metric_label=_metric_label(config),
             save_path=config.save_plot,
             show=not config.no_show,
         )
