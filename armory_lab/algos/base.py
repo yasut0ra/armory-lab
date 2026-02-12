@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Protocol
 
 import numpy as np
 from numpy.typing import NDArray
@@ -22,6 +22,27 @@ class HistoryRecord:
 
 
 RoundCallback = Callable[[HistoryRecord], None]
+
+
+class BanditLike(Protocol):
+    @property
+    def n_arms(self) -> int:
+        ...
+
+    @property
+    def reward_min(self) -> float:
+        ...
+
+    @property
+    def reward_max(self) -> float:
+        ...
+
+    @property
+    def reward_range(self) -> float:
+        ...
+
+    def pull(self, arm: int) -> float | int:
+        ...
 
 
 @dataclass(slots=True)
