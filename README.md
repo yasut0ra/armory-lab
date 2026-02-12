@@ -1,15 +1,24 @@
 # armory-lab
 
 固定信頼度 (fixed-confidence, PAC) の Best Arm Identification (BAI) を、
-「研究コードとして読みやすく」「デモとして触って楽しい」を両立する最小構成で実装したリポジトリです。
+研究実験とデモの両方で扱える Python ツールキットです。
 
-## このリポジトリでできること
+## できること
 
-- Bernoulli bandit 環境で最良腕を同定
-- アルゴリズム: `LUCB` / `Successive Elimination` / `Track-and-Stop`
-- 指標: 誤識別率、停止時刻（総試行数）、腕ごとのサンプル配分
-- 可視化: CI推移、サンプル配分、停止時点
-- 実行手段: CLI / Web UI / 武器鑑定デモ / 実験スイープ
+- 環境
+  - `bernoulli`: 各腕の報酬が Bernoulli
+  - `weapon_damage`: 各腕が 2点混合ダメージ分布（通常ダメージ `d0` / クリダメ `d1` / クリ確率 `p`）
+- objective（最強の定義）
+  - `dps`: 期待ダメージ最大（`E[damage]` 最大）
+  - `oneshot`: `P(damage >= threshold)` 最大
+- アルゴリズム
+  - `LUCB`
+  - `Successive Elimination`
+  - `Track-and-Stop`
+- 出力
+  - 推奨腕、停止時刻、腕ごとのサンプル配分、履歴
+- 可視化
+  - CI推移、サンプル配分、停止時点
 
 ## 1分セットアップ
 
@@ -20,134 +29,128 @@ pip install -e .
 pip install -e '.[dev]'
 ```
 
-## 最初に触るなら Web UI
+## 最短で触る（Web UI）
 
 ```bash
 python -m armory_lab.web --host 127.0.0.1 --port 7860
 ```
 
-- アクセス先: `http://127.0.0.1:7860`
-- 画面左: パラメータ入力
-- 画面右: 推奨腕、停止理由、CI推移、サンプル配分
+- アクセス: `http://127.0.0.1:7860`
+- `env` / `objective` / `threshold` / `algo` を切り替えて実行
 
-### Web UI でよく使う入力例
+## CLI
 
-- `means=random`: 難易度が毎回変わる
-- `means=topgap:0.05`: 1位と2位が近く、やや難しい
-- `means=topgap:0.10`: ギャップが大きく、停止が早い
-- `means=two-groups`: 上位群と下位群に分かれる
-
-### 結果の見方
-
-- `推奨腕`: アルゴリズムが最良と判断した腕
-- `真の最良腕`: 生成した真の平均での最良腕
-- `停止時の総試行数`: 判定までに必要だったサンプル数
-- `CI推移`: 推定平均と信頼区間の時間推移
-- `サンプル配分`: どの腕を重点的に引いたか
-
-## CLI で実行
+### 既存（bernoulli）
 
 ```bash
 python -m armory_lab.run --algo lucb --K 20 --delta 0.05 --means topgap:0.05 --seed 0 --plot
 ```
 
-画像保存だけしたい場合:
-
-```bash
-python -m armory_lab.run --algo se --K 15 --means two-groups --plot --save-plot artifacts/se_two_groups.png --no-show
-```
-
-### CLI の実用オプション
-
-- `--means-list`: 腕の平均を直接指定（例: `0.8,0.5,0.3,0.2`）
-- `--trials`: 複数seedで連続実行して集計
-- `--seed-step`: 試行ごとのseed増分
-- `--output-csv`: 試行ごとの結果をCSV保存
-- `--json`: 結果をJSONで出力（他ツール連携向け）
-
-`--algo` は `lucb`, `se`, `tas`（Track-and-Stop）を選べます。
-
-固定の平均で1回だけ実行:
+### weapon_damage + dps
 
 ```bash
 python -m armory_lab.run \
+  --env weapon_damage \
   --algo lucb \
-  --means-list 0.85,0.6,0.4,0.2 \
-  --delta 0.05 \
-  --seed 0
-```
-
-100試行を一括実行してCSV保存:
-
-```bash
-python -m armory_lab.run \
-  --algo lucb \
-  --K 20 \
-  --means topgap:0.05 \
+  --objective dps \
+  --pack random \
+  --K 12 \
   --delta 0.05 \
   --seed 0 \
-  --trials 100 \
-  --seed-step 1 \
-  --output-csv reports/lucb_topgap005.csv
+  --plot
 ```
 
-## 武器鑑定デモ (ログ重視)
+### weapon_damage + oneshot
 
 ```bash
-python demo/weapon_appraisal.py --algo lucb --delta 0.05 --seed 0 --plot
+python -m armory_lab.run \
+  --env weapon_damage \
+  --algo lucb \
+  --objective oneshot \
+  --threshold 100 \
+  --pack archetypes \
+  --K 12 \
+  --delta 0.05 \
+  --seed 0 \
+  --plot
 ```
 
-各ラウンドで以下を表示します。
+### 実用オプション
 
-- どの武器を試したか
-- 推定値と信頼区間
-- 候補がどう絞られていくか
+- `--trials`: 複数seedで連続実行
+- `--seed-step`: 試行ごとのseed増分
+- `--output-csv`: 試行ごとの結果CSV
+- `--json`: JSON出力
+- `--means-list`: bernoulliの腕平均を直接指定
 
-## 実験スイープ (CSV出力)
+## レジーム
+
+### bernoulli (`--means`)
+
+- `random`
+- `topgap:x`
+- `two-groups`
+
+### weapon_damage (`--pack`)
+
+- `random`
+  - `d0 in [50,90]`, `d1 in [90,140]`, `p in [0.05,0.35]`
+- `topgap:x`
+  - best の期待ダメージが 2位より `x` 高いように構成
+- `archetypes`
+  - 安定型 / クリ型 / ギャンブル型を混合
+
+## 武器鑑定デモ
+
+```bash
+python demo/weapon_appraisal.py --env weapon_damage --algo lucb --objective dps --pack archetypes --seed 0
+python demo/weapon_appraisal.py --env weapon_damage --algo lucb --objective oneshot --threshold 100 --pack archetypes --seed 0
+```
+
+- LUCB時は leader vs challenger をラウンド表示
+- 鑑定ゲージ（`gap = LCB_best - maxUCB_others` 由来）を表示
+
+## 実験スイープ
+
+### dps軸（gap sweep）
 
 ```bash
 python experiments/sweep.py \
+  --env weapon_damage \
+  --objective dps \
   --algo lucb \
   --K-values 10,20 \
   --deltas 0.05,0.1 \
-  --gaps 0.03,0.05,0.1 \
+  --gaps 4,8,12 \
+  --pack-regime topgap \
   --trials 50 \
-  --output experiments/sweep_results.csv
+  --output experiments/sweep_weapon_dps.csv
 ```
 
-CSV列:
+### oneshot軸（threshold sweep）
 
-- `mean_total_pulls`
-- `misidentification_rate`
-- `mean_pulls_per_arm`
+```bash
+python experiments/sweep.py \
+  --env weapon_damage \
+  --objective oneshot \
+  --algo lucb \
+  --K-values 10,20 \
+  --deltas 0.05,0.1 \
+  --thresholds 90,100,110 \
+  --pack-regime archetypes \
+  --trials 50 \
+  --output experiments/sweep_weapon_oneshot.csv
+```
 
-## アルゴリズム概要
+CSVには `env/objective/threshold` を含みます。
 
-- `Successive Elimination`
-  - 残っている腕をラウンドで順に引く
-  - CIで明確に劣る腕を除去
-  - 1本になったら停止
-- `LUCB`
-  - 現在の最良推定腕と最有力対抗腕を重点サンプリング
-  - `LCB(best) >= UCB(challenger)` で停止
-- `Track-and-Stop`
-  - 経験平均からサンプル配分を追従（tracking）しつつ引く
-  - Bernoulli KL に基づく GLR 統計がしきい値を超えたら停止
+## 実装メモ
 
-どちらも fixed-confidence 設定で停止し、次を返します。
+- CIは Hoeffding 型（時刻依存 `delta_{i,t}`）
+- `weapon_damage` の `dps` は有界報酬レンジでCI幅をスケール
+- `oneshot` は内部的に `hit = 1(damage >= threshold)` として扱い、Bernoulli型で同定
 
-- `recommend_arm`
-- `total_pulls`
-- `pulls_per_arm`
-- `history`
-
-## 信頼区間の設計
-
-Hoeffding型の信頼半径を使い、
-時刻依存の割当として `delta_{i,t} = delta / (2 K t^2)` を採用しています。
-この設計で `sum_{i,t} delta_{i,t} <= delta` を満たし、全時刻同時保証の形にしています。
-
-## テストと型チェック
+## テスト / 型チェック
 
 ```bash
 pytest -q
