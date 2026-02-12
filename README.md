@@ -15,6 +15,7 @@
   - `dps`: 期待ダメージ最大（`E[damage]` 最大）
   - `oneshot`: `P(damage >= threshold)` 最大
 - アルゴリズム
+  - `KL-LUCB`（Bernoulli/oneshotで低サンプル向け）
   - `LUCB`
   - `Successive Elimination`
   - `Track-and-Stop`
@@ -49,6 +50,12 @@ python -m armory_lab.web --host 127.0.0.1 --port 7860
 
 ```bash
 python -m armory_lab.run --algo lucb --K 20 --delta 0.05 --means topgap:0.05 --seed 0 --plot
+```
+
+### 低サンプル重視（Bernoulli/oneshot向け）
+
+```bash
+python -m armory_lab.run --algo kllucb --env bernoulli --objective dps --K 20 --delta 0.05 --means topgap:0.05 --seed 0
 ```
 
 ### weapon_damage + dps
